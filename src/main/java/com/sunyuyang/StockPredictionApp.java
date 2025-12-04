@@ -3,7 +3,7 @@ package com.sunyuyang;
 import com.sunyuyang.dao.DatabaseConfig;
 import com.sunyuyang.dao.StockDataDao;
 import com.sunyuyang.entity.ModelConfig;
-import com.sunyuyang.entity.StockKLine;
+import com.sunyuyang.entity.ZhituStockKLine;
 import com.sunyuyang.model.LSTMModel;
 import com.sunyuyang.service.*;
 import org.slf4j.Logger;
@@ -44,7 +44,7 @@ public class StockPredictionApp {
             LocalDateTime startDate = endDate.minusYears(3); // 过去三年
 
             logger.info("Fetching data from {} to {}", startDate, endDate);
-            List<StockKLine> klineData = stockDataDao.getKLineData(STOCK_CODE, startDate, endDate);
+            List<ZhituStockKLine> klineData = stockDataDao.getKLineData(STOCK_CODE, startDate, endDate);
 
             if (klineData.isEmpty()) {
                 logger.error("No data found for stock: {}", STOCK_CODE);

@@ -1,15 +1,15 @@
 package com.sunyuyang.service;
 
 import com.sunyuyang.dao.StockDataDao;
-import com.sunyuyang.entity.StockKLine;
+import com.sunyuyang.entity.ZhituStockKLine;
 import com.sunyuyang.model.LSTMModel;
 import com.sunyuyang.util.PredictionDenormalizer;
 import org.nd4j.linalg.api.ndarray.INDArray;
-import org.nd4j.linalg.factory.Nd4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +21,12 @@ public class PredictionService {
     public PredictionService(StockDataDao stockDataDao, DataPreprocessingService preprocessingService) {
         this.stockDataDao = stockDataDao;
         this.preprocessingService = preprocessingService;
+    }
+
+    // 示例转换方法
+    public LocalDateTime convertToLocalDateTime(String dateTimeStr) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"); // 根据实际格式调整
+        return LocalDateTime.parse(dateTimeStr, formatter);
     }
 
     /**
@@ -35,7 +41,7 @@ public class PredictionService {
             LocalDateTime endDate = LocalDateTime.now();
             LocalDateTime startDate = endDate.minusDays(timeSteps * 15 / (24 * 60)); // 近似计算
 
-            List<StockKLine> recentData = stockDataDao.getKLineData(stockCode, startDate, endDate);
+            List<ZhituStockKLine> recentData = stockDataDao.getKLineData(stockCode, startDate, endDate);
 
             if (recentData.size() < timeSteps) {
                 throw new IllegalArgumentException(String.format(
@@ -70,7 +76,7 @@ public class PredictionService {
 
             // 7. 生成预测时间点
             List<LocalDateTime> predictionTimes = generatePredictionTimes(
-                    recentData.get(recentData.size() - 1).getTradeTime(), predictSteps);
+                    convertToLocalDateTime(recentData.get(recentData.size() - 1).getTradeTime()), predictSteps);
 
             logger.info("Prediction completed. Generated {} future price points", futurePrices.size());
 

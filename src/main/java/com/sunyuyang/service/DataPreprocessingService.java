@@ -1,6 +1,6 @@
 package com.sunyuyang.service;
 
-import com.sunyuyang.entity.StockKLine;
+import com.sunyuyang.entity.ZhituStockKLine;
 import com.sunyuyang.feature.FeatureEngineeringService;
 import com.sunyuyang.util.MinMaxNormalizer;
 import org.nd4j.linalg.api.ndarray.INDArray;
@@ -25,7 +25,7 @@ public class DataPreprocessingService {
     /**
      * 完整数据预处理流程
      */
-    public ProcessedData preprocessData(List<StockKLine> klineData, int timeSteps, int predictSteps) {
+    public ProcessedData preprocessData(List<ZhituStockKLine> klineData, int timeSteps, int predictSteps) {
         logger.info("Starting data preprocessing...");
 
         // 1. 特征工程

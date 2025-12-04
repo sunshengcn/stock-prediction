@@ -10,15 +10,15 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-public class StockDataDao {
-    private static final Logger logger = LoggerFactory.getLogger(StockDataDao.class);
+public class ZhituStockDataDao {
+    private static final Logger logger = LoggerFactory.getLogger(ZhituStockDataDao.class);
     private final DataSource dataSource;
 
-    public StockDataDao() {
+    public ZhituStockDataDao() {
         this.dataSource = DatabaseConfig.getDataSource();
     }
 
-    public StockDataDao(DataSource dataSource) {
+    public ZhituStockDataDao(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 
@@ -27,8 +27,8 @@ public class StockDataDao {
      */
     public List<ZhituStockKLine> getKLineData(String stockCode, LocalDateTime startDate, LocalDateTime endDate) {
         String sql = "SELECT trade_time, open_price, high_price, low_price, close_price, " +
-                "volume, amount, prev_close, is_suspended " +
-                "FROM stock_15min_kline " +
+                "volume, amount, prev_close, is_suspended,time_level " +
+                "FROM zhitu_stock_k_line " +
                 "WHERE stock_code = ? AND trade_time BETWEEN ? AND ? " +
                 "ORDER BY trade_time ASC";
 
@@ -54,6 +54,7 @@ public class StockDataDao {
                     kline.setAmount(rs.getDouble("amount"));
                     kline.setPrevClose(rs.getDouble("prev_close"));
                     kline.setIsSuspended(rs.getString("is_suspended"));
+                    kline.setTimeLevel(rs.getString("time_level"));
                     result.add(kline);
                 }
             }
@@ -77,19 +78,19 @@ public class StockDataDao {
             return;
         }
 
-        String sql = "INSERT INTO stock_15min_kline " +
+        String sql = "INSERT INTO zhitu_stock_k_line " +
                 "(stock_code, trade_time, open_price, high_price, low_price, " +
-                "close_price, volume, amount, prev_close, is_suspended) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                "close_price, volume, amount, prev_close, is_suspended,time_level) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) " +
                 "ON DUPLICATE KEY UPDATE " +
                 "open_price = VALUES(open_price), high_price = VALUES(high_price), " +
                 "low_price = VALUES(low_price), close_price = VALUES(close_price), " +
                 "volume = VALUES(volume), amount = VALUES(amount), " +
-                "prev_close = VALUES(prev_close), is_suspended = VALUES(is_suspended)";
+                "prev_close = VALUES(prev_close), is_suspended = VALUES(is_suspended)," +
+                "time_level = VALUES(time_level)";
 
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
+        PreparedStatement ps = conn.prepareStatement(sql)) {
             conn.setAutoCommit(false);
 
             for (ZhituStockKLine kline : klineData) {
@@ -103,6 +104,7 @@ public class StockDataDao {
                 ps.setDouble(8, kline.getAmount());
                 ps.setDouble(9, kline.getPrevClose());
                 ps.setString(10, kline.getIsSuspended());
+                ps.setString(11, kline.getTimeLevel());
                 ps.addBatch();
             }
 
@@ -121,7 +123,7 @@ public class StockDataDao {
      * 获取最新交易时间
      */
     public LocalDateTime getLatestTradeTime(String stockCode) {
-        String sql = "SELECT MAX(trade_time) as latest_time FROM stock_15min_kline WHERE stock_code = ?";
+        String sql = "SELECT MAX(trade_time) as latest_time FROM zhitu_stock_k_line WHERE stock_code = ?";
 
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -146,7 +148,7 @@ public class StockDataDao {
      */
     public boolean checkTableExists() {
         String sql = "SELECT COUNT(*) FROM information_schema.tables " +
-                "WHERE table_schema = DATABASE() AND table_name = 'stock_15min_kline'";
+                "WHERE table_schema = DATABASE() AND table_name = 'zhitu_stock_k_line'";
 
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement();

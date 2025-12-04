@@ -1,13 +1,12 @@
 package com.sunyuyang.feature;
 
-import com.sunyuyang.entity.StockKLine;
+import com.sunyuyang.entity.ZhituStockKLine;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.List;
 
 public class FeatureEngineeringService {
@@ -16,14 +15,14 @@ public class FeatureEngineeringService {
     /**
      * 提取基础特征
      */
-    public INDArray extractBasicFeatures(List<StockKLine> klineData) {
+    public INDArray extractBasicFeatures(List<ZhituStockKLine> klineData) {
         int timesteps = klineData.size();
         int features = 12; // 基础特征数量
 
         INDArray featureArray = Nd4j.create(timesteps, features);
 
         for (int i = 0; i < timesteps; i++) {
-            StockKLine k = klineData.get(i);
+            ZhituStockKLine k = klineData.get(i);
             int featureIndex = 0;
 
             // 1. 价格特征
@@ -38,7 +37,7 @@ public class FeatureEngineeringService {
 
             // 3. 价格变动特征
             if (i > 0) {
-                StockKLine prevK = klineData.get(i - 1);
+                ZhituStockKLine prevK = klineData.get(i - 1);
                 double priceChange = (k.getClose() - prevK.getClose()) / prevK.getClose();
                 featureArray.putScalar(i, featureIndex++, priceChange);
 
@@ -61,7 +60,12 @@ public class FeatureEngineeringService {
             featureArray.putScalar(i, featureIndex++, avgPrice);
 
             // 交易状态
-            featureArray.putScalar(i, featureIndex++, k.isSuspended() ? 0.0 : 1.0);
+            if (k.getIsSuspended().equals("0")) {
+                featureArray.putScalar(i, featureIndex++, 0.0);
+            } else {
+                featureArray.putScalar(i, featureIndex++, 1.0);
+            }
+
         }
 
         logger.info("Extracted {} basic features from {} timesteps", features, timesteps);
@@ -71,7 +75,7 @@ public class FeatureEngineeringService {
     /**
      * 添加技术指标
      */
-    public INDArray addTechnicalIndicators(INDArray basicFeatures, List<StockKLine> klineData) {
+    public INDArray addTechnicalIndicators(INDArray basicFeatures, List<ZhituStockKLine> klineData) {
         int timesteps = (int) basicFeatures.size(0);
         int basicFeatureCount = (int) basicFeatures.size(1);
         int technicalIndicatorCount = 8; // 技术指标数量
@@ -176,7 +180,7 @@ public class FeatureEngineeringService {
                 double low = Double.MAX_VALUE;
 
                 for (int j = 0; j < 10; j++) {
-                    StockKLine k = klineData.get(i - j);
+                    ZhituStockKLine k = klineData.get(i - j);
                     high = Math.max(high, k.getHigh());
                     low = Math.min(low, k.getLow());
                 }
@@ -193,7 +197,7 @@ public class FeatureEngineeringService {
                 double totalVolume = 0;
 
                 for (int j = 0; j < 5; j++) {
-                    StockKLine k = klineData.get(i - j);
+                    ZhituStockKLine k = klineData.get(i - j);
                     totalAmount += k.getAmount();
                     totalVolume += k.getVolume();
                 }
@@ -222,7 +226,7 @@ public class FeatureEngineeringService {
     /**
      * 创建标签数据
      */
-    public INDArray createLabels(List<StockKLine> klineData, int predictSteps) {
+    public INDArray createLabels(List<ZhituStockKLine> klineData, int predictSteps) {
         int timesteps = klineData.size() - predictSteps;
 
         if (timesteps <= 0) {
