@@ -24,13 +24,31 @@
         <hikari.version>5.0.1</hikari.version>
         <maven.shade.plugin.version>3.5.0</maven.shade.plugin.version>
     </properties>
-
+    <!--
+    <pluginRepositories>
+        <pluginRepository>
+            <id>deeplearning4j-plugin-repo</id>
+            <url>https://repo.deeplearning4j.org/maven/</url>
+        </pluginRepository>
+        <pluginRepository>
+            <id>central-plugin-repo</id>
+            <url>https://repo1.maven.org/maven2/</url>
+        </pluginRepository>
+    </pluginRepositories>
+    -->
     <dependencies>
         <!-- DeepLearning4J 核心 -->
         <dependency>
             <groupId>org.deeplearning4j</groupId>
             <artifactId>deeplearning4j-core</artifactId>
             <version>${dl4j.version}</version>
+            <exclusions>
+                <!-- 排除可能引起冲突的 okio 依赖 -->
+                <exclusion>
+                    <groupId>com.squareup.okio</groupId>
+                    <artifactId>okio</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- ND4J 后端 - 使用平台无关版本，运行时自动检测 -->
@@ -38,6 +56,17 @@
             <groupId>org.nd4j</groupId>
             <artifactId>nd4j-native-platform</artifactId>
             <version>${nd4j.version}</version>
+            <exclusions>
+                <!-- 排除可能引起冲突的 okio 依赖 -->
+                <exclusion>
+                    <groupId>com.squareup.okio</groupId>
+                    <artifactId>okio</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.squareup.okio</groupId>
+                    <artifactId>okio-jvm</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- 数据库 -->
@@ -49,6 +78,11 @@
                 <exclusion>
                     <groupId>com.google.protobuf</groupId>
                     <artifactId>protobuf-java</artifactId>
+                </exclusion>
+                <!-- 排除 okio 冲突 -->
+                <exclusion>
+                    <groupId>com.squareup.okio</groupId>
+                    <artifactId>*</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -91,6 +125,18 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-csv</artifactId>
             <version>1.10.0</version>
+        </dependency>
+        <!-- HTTP请求 -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.11.0</version>
+        </dependency>
+        <!-- JSON 解析工具 -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.50</version>
         </dependency>
     </dependencies>
 
@@ -174,7 +220,18 @@
                                         <exclude>OSGI-OPT/**</exclude>
                                     </excludes>
                                 </filter>
-
+                                <!-- 特别处理 okio 相关的 JAR -->
+                                <filter>
+                                    <artifact>com.squareup.okio:*</artifact>
+                                    <excludes>
+                                        <!-- 排除所有 Kotlin 相关文件 -->
+                                        <exclude>META-INF/*.kotlin_module</exclude>
+                                        <exclude>**/*.kotlin_builtins</exclude>
+                                        <exclude>**/*.kotlin_metadata</exclude>
+                                        <!-- 排除 META-INF 资源 -->
+                                        <exclude>META-INF/**</exclude>
+                                    </excludes>
+                                </filter>
                                 <!-- 特别处理某些库 -->
                                 <filter>
                                     <artifact>org.bytedeco:*</artifact>
