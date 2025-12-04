@@ -91,7 +91,7 @@ public class DataPreprocessingService {
         int featureSize = (int) features.size(1);
 
         INDArray windowed = Nd4j.create(totalWindows, timeSteps, featureSize);
-
+        /*
         for (int i = 0; i < totalWindows; i++) {
             //INDArray window = features.get(
             //        Nd4j.createIndexArray(i, i + timeSteps),
@@ -102,8 +102,16 @@ public class DataPreprocessingService {
                     NDArrayIndex.all()
             );
             windowed.put(new int[]{i, 0, 0}, window);
+        }*/
+        for (int i = 0; i < totalWindows; i++) {
+            // 使用区间索引获取窗口
+            INDArray window = features.get(
+                    NDArrayIndex.interval(i, i + timeSteps),
+                    NDArrayIndex.all()
+            );
+            // 将窗口放入三维数组的第i个切片
+            windowed.putSlice(i, window);
         }
-
         return windowed;
     }
 

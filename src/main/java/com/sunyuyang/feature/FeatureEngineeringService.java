@@ -167,7 +167,7 @@ public class FeatureEngineeringService {
             }
 
             // 5. 动量指标
-            if (i >= 9) {
+            if (i > 9) {
                 double momentum = klineData.get(i).getClose() - klineData.get(i - 10).getClose();
                 enhancedFeatures.putScalar(i, featureIndex++, momentum / klineData.get(i - 10).getClose());
             } else {

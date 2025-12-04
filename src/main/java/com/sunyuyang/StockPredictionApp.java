@@ -19,7 +19,7 @@ public class StockPredictionApp {
     // 配置
     private static final String STOCK_CODE = "300624.SZ"; // 示例股票代码
     private static final String MODEL_NAME = "stock_predictor_v1";
-    private static final boolean RETRAIN_MODEL = false; // 是否重新训练模型
+    private static final boolean RETRAIN_MODEL = true; // 是否重新训练模型
 
     public static void main(String[] args) {
         logger.info("Starting Stock Prediction Application...");
