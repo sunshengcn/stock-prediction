@@ -16,38 +16,14 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <java.version>17</java.version>
-
-        <!-- 版本管理 -->
-        <dl4j.version>1.0.0-beta7</dl4j.version>
-        <nd4j.version>1.0.0-beta7</nd4j.version>
-        <slf4j.version>2.0.7</slf4j.version>  <!-- 更新到 2.x -->
-        <mysql.version>8.0.33</mysql.version>
+        <!-- 考虑升级到更稳定的版本 -->
+        <dl4j.version>1.0.0-M2.1</dl4j.version>
+        <nd4j.version>1.0.0-M2.1</nd4j.version>
+        <slf4j.version>2.0.7</slf4j.version>
+        <mysql.version>8.1.0</mysql.version>
         <hikari.version>5.0.1</hikari.version>
-        <protobuf.version>3.21.12</protobuf.version>
-        <commons.math3.version>3.6.1</commons.math3.version>
+        <maven.shade.plugin.version>3.5.0</maven.shade.plugin.version>
     </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <!-- 统一依赖版本 -->
-            <dependency>
-                <groupId>com.google.protobuf</groupId>
-                <artifactId>protobuf-java</artifactId>
-                <version>${protobuf.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.commons</groupId>
-                <artifactId>commons-math3</artifactId>
-                <version>${commons.math3.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.slf4j</groupId>
-                <artifactId>slf4j-api</artifactId>
-                <version>${slf4j.version}</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <!-- DeepLearning4J 核心 -->
@@ -55,36 +31,13 @@
             <groupId>org.deeplearning4j</groupId>
             <artifactId>deeplearning4j-core</artifactId>
             <version>${dl4j.version}</version>
-            <exclusions>
-                <!-- 排除冲突的依赖 -->
-                <exclusion>
-                    <groupId>org.nd4j</groupId>
-                    <artifactId>protobuf</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.google.protobuf</groupId>
-                    <artifactId>protobuf-java</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
-        <!-- ND4J 后端 -->
+        <!-- ND4J 后端 - 使用平台无关版本，运行时自动检测 -->
         <dependency>
             <groupId>org.nd4j</groupId>
-            <artifactId>nd4j-native</artifactId>
+            <artifactId>nd4j-native-platform</artifactId>
             <version>${nd4j.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.nd4j</groupId>
-                    <artifactId>protobuf</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Google Protobuf -->
-        <dependency>
-            <groupId>com.google.protobuf</groupId>
-            <artifactId>protobuf-java</artifactId>
         </dependency>
 
         <!-- 数据库 -->
@@ -92,6 +45,12 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <version>${mysql.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.protobuf</groupId>
+                    <artifactId>protobuf-java</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- 数据库连接池 -->
@@ -105,6 +64,7 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -116,6 +76,21 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
+            <version>3.6.1</version>
+        </dependency>
+
+        <!-- CSV处理 -->
+        <dependency>
+            <groupId>com.opencsv</groupId>
+            <artifactId>opencsv</artifactId>
+            <version>5.8</version>
+        </dependency>
+
+        <!-- 数据处理工具 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.10.0</version>
         </dependency>
     </dependencies>
 
@@ -123,8 +98,19 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.0</version>
+                <version>${maven.shade.plugin.version}</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -132,43 +118,184 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
-                            <finalName>${project.artifactId}</finalName>
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
+                            <dependencyReducedPomLocation>
+                                ${project.build.directory}/dependency-reduced-pom.xml
+                            </dependencyReducedPomLocation>
                             <transformers>
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.sunyuyang.StockPredictionApp</mainClass>
                                 </transformer>
+                                <!-- 处理ServiceLoader文件 -->
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                                <!-- 添加这个来处理重复的 MANIFEST.MF -->
+                                <!-- 添加AppendingTransformer处理特定资源文件 -->
                                 <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>reference.conf</resource>
+                                </transformer>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>application.conf</resource>
+                                </transformer>
                             </transformers>
+
                             <filters>
+                                <!-- 通用过滤器 -->
                                 <filter>
                                     <artifact>*:*</artifact>
                                     <excludes>
-                                        <!-- 排除所有元数据 -->
+                                        <!-- 排除所有元数据文件 -->
                                         <exclude>META-INF/maven/**</exclude>
                                         <exclude>META-INF/INDEX.LIST</exclude>
-                                        <!-- 排除重复的许可证文件 -->
-                                        <exclude>META-INF/LICENSE*</exclude>
-                                        <exclude>META-INF/NOTICE*</exclude>
-                                        <!-- 排除 Protobuf 文件 -->
-                                        <exclude>google/protobuf/**</exclude>
-                                        <!-- 尝试排除 Java 9 模块信息 -->
-                                        <exclude>META-INF/versions/9/module-info.class</exclude>
-                                        <!-- 排除签名文件 -->
+                                        <exclude>META-INF/DEPENDENCIES</exclude>
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <!-- 排除签名文件 -->
+                                        <exclude>META-INF/SIG-*</exclude>
+                                        <!-- 排除重复的MANIFEST.MF -->
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <!-- 排除所有许可证和通知文件 -->
+                                        <exclude>META-INF/LICENSE*</exclude>
+                                        <exclude>META-INF/NOTICE*</exclude>
+                                        <exclude>META-INF/*.txt</exclude>
+                                        <exclude>META-INF/*.md</exclude>
+                                        <exclude>META-INF/*.properties</exclude>
+                                        <!-- 排除模块信息 -->
+                                        <exclude>META-INF/versions/**</exclude>
+                                        <!-- 排除本地库信息 -->
+                                        <exclude>META-INF/native/**</exclude>
+                                        <exclude>META-INF/native-image/**</exclude>
+                                        <!-- 排除OSGi配置 -->
+                                        <exclude>META-INF/services/**</exclude>
+                                        <exclude>OSGI-INF/**</exclude>
+                                        <exclude>OSGI-OPT/**</exclude>
+                                    </excludes>
+                                </filter>
+
+                                <!-- 特别处理某些库 -->
+                                <filter>
+                                    <artifact>org.bytedeco:*</artifact>
+                                    <excludes>
+                                        <exclude>**/*.so</exclude>
+                                        <exclude>**/*.dll</exclude>
+                                        <exclude>**/*.dylib</exclude>
+                                        <exclude>**/*.jnilib</exclude>
+                                        <exclude>**/*.lib</exclude>
+                                        <exclude>**/*.a</exclude>
+                                        <exclude>**/*.h</exclude>
+                                        <exclude>**/*.hpp</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
+
+                            <artifactSet>
+                                <excludes>
+                                    <!-- 排除测试相关的依赖 -->
+                                    <exclude>junit:junit</exclude>
+                                    <exclude>org.junit.*:*</exclude>
+                                    <exclude>org.hamcrest:*</exclude>
+                                    <exclude>org.mockito:*</exclude>
+
+                                    <!-- 排除重复的opencsv版本 -->
+                                    <exclude>com.opencsv:opencsv:jar:2.3</exclude>
+
+                                    <!-- 排除平台特定的nd4j-native（使用nd4j-native-platform代替） -->
+                                    <exclude>org.nd4j:nd4j-native:*</exclude>
+
+                                    <!-- 排除不需要的JavaCPP平台JAR -->
+                                    <exclude>org.bytedeco:javacpp-platform</exclude>
+                                    <exclude>org.bytedeco:opencv-platform</exclude>
+                                    <exclude>org.bytedeco:leptonica-platform</exclude>
+                                    <exclude>org.bytedeco:hdf5-platform</exclude>
+                                    <exclude>org.bytedeco:openblas-platform</exclude>
+
+                                    <!-- 排除其他平台特定的JAR -->
+                                    <exclude>org.bytedeco:*:android-*</exclude>
+                                    <exclude>org.bytedeco:*:ios-*</exclude>
+                                    <exclude>org.bytedeco:*:linux-*</exclude>
+                                    <exclude>org.bytedeco:*:macosx-*</exclude>
+                                    <exclude>org.bytedeco:*:windows-x86</exclude>
+                                </excludes>
+                            </artifactSet>
+
+                            <!-- 启用JAR最小化，移除未使用的类 -->
+                            <minimizeJar>true</minimizeJar>
+
+                            <!-- 可选：添加重定位策略避免类冲突 -->
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.google</pattern>
+                                    <shadedPattern>com.shaded.google</shadedPattern>
+                                    <excludes>
+                                        <!-- 排除一些可能不需要重定位的包 -->
+                                        <exclude>com.google.common.**</exclude>
+                                    </excludes>
+                                </relocation>
+                            </relocations>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- 清理插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <filesets>
+                        <fileset>
+                            <directory>${project.build.directory}</directory>
+                            <includes>
+                                <include>**/*.jar</include>
+                                <include>**/*.class</include>
+                            </includes>
+                            <excludes>
+                                <exclude>**/stock-prediction-*.jar</exclude>
+                            </excludes>
+                        </fileset>
+                    </filesets>
+                </configuration>
+            </plugin>
         </plugins>
+
+        <!-- 资源过滤配置 -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <excludes>
+                    <exclude>**/*.jks</exclude>
+                    <exclude>**/*.p12</exclude>
+                    <exclude>**/*.key</exclude>
+                    <exclude>**/*.crt</exclude>
+                </excludes>
+            </resource>
+        </resources>
     </build>
+
+    <!-- 配置文件 -->
+    <profiles>
+        <!-- 开发环境 -->
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <build.profile.id>dev</build.profile.id>
+            </properties>
+        </profile>
+
+        <!-- 生产环境 -->
+        <profile>
+            <id>prod</id>
+            <properties>
+                <build.profile.id>prod</build.profile.id>
+            </properties>
+        </profile>
+    </profiles>
 </project>

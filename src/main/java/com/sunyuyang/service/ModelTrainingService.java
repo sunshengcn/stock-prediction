@@ -3,7 +3,7 @@ package com.sunyuyang.service;
 import com.sunyuyang.entity.ModelConfig;
 import com.sunyuyang.model.LSTMModel;
 import com.sunyuyang.util.EvaluationMetrics;
-import org.deeplearning4j.datasets.iterator.impl.ListDataSetIterator;
+import org.deeplearning4j.datasets.iterator.utilty.ListDataSetIterator;
 import org.deeplearning4j.earlystopping.termination.MaxScoreIterationTerminationCondition;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.earlystopping.EarlyStoppingConfiguration;
