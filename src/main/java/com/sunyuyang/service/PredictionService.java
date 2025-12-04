@@ -1,6 +1,7 @@
 package com.sunyuyang.service;
 
 import com.sunyuyang.dao.StockDataDao;
+import com.sunyuyang.dao.ZhituStockDataDao;
 import com.sunyuyang.entity.ZhituStockKLine;
 import com.sunyuyang.model.LSTMModel;
 import com.sunyuyang.util.PredictionDenormalizer;
@@ -15,10 +16,10 @@ import java.util.List;
 
 public class PredictionService {
     private static final Logger logger = LoggerFactory.getLogger(PredictionService.class);
-    private final StockDataDao stockDataDao;
+    private final ZhituStockDataDao stockDataDao;
     private final DataPreprocessingService preprocessingService;
 
-    public PredictionService(StockDataDao stockDataDao, DataPreprocessingService preprocessingService) {
+    public PredictionService(ZhituStockDataDao stockDataDao, DataPreprocessingService preprocessingService) {
         this.stockDataDao = stockDataDao;
         this.preprocessingService = preprocessingService;
     }

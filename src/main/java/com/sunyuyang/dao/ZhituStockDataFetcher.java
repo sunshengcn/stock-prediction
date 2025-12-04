@@ -32,7 +32,7 @@ public class ZhituStockDataFetcher {
         ZhituStockDataDao dataDao = new ZhituStockDataDao();
         try {
             // 示例：获取 贵州茅台（600519，沪市）2025年11月1日-2025年11月18日的 5分钟前复权数据
-            List<ZhituStockKLine> stockTimeList = fetcher.getStockTimeList("300624.SZ", "5", "n", "20250101", "20251205");
+            List<ZhituStockKLine> stockTimeList = fetcher.getStockTimeList("300624.SZ", "5", "n", "20240101", "20250101");
             dataDao.saveKLineDataBatch(stockTimeList);
         } catch (IOException e) {
             System.err.println("数据获取失败（网络/接口连接问题）：" + e.getMessage());

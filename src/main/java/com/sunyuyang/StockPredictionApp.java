@@ -1,7 +1,7 @@
 package com.sunyuyang;
 
 import com.sunyuyang.dao.DatabaseConfig;
-import com.sunyuyang.dao.StockDataDao;
+import com.sunyuyang.dao.ZhituStockDataDao;
 import com.sunyuyang.entity.ModelConfig;
 import com.sunyuyang.entity.ZhituStockKLine;
 import com.sunyuyang.model.LSTMModel;
@@ -17,7 +17,7 @@ public class StockPredictionApp {
     private static final Logger logger = LoggerFactory.getLogger(StockPredictionApp.class);
 
     // 配置
-    private static final String STOCK_CODE = "000001.SZ"; // 示例股票代码
+    private static final String STOCK_CODE = "300624.SZ"; // 示例股票代码
     private static final String MODEL_NAME = "stock_predictor_v1";
     private static final boolean RETRAIN_MODEL = false; // 是否重新训练模型
 
@@ -27,14 +27,14 @@ public class StockPredictionApp {
         try {
             // 1. 初始化组件
             ModelConfig modelConfig = ModelConfig.getDefaultConfig();
-            StockDataDao stockDataDao = new StockDataDao();
+            ZhituStockDataDao stockDataDao = new ZhituStockDataDao();
             DataPreprocessingService preprocessingService = new DataPreprocessingService();
             ModelTrainingService trainingService = new ModelTrainingService(modelConfig);
             PredictionService predictionService = new PredictionService(stockDataDao, preprocessingService);
 
             // 2. 检查数据库连接
             if (!stockDataDao.checkTableExists()) {
-                logger.error("Database table 'stock_15min_kline' does not exist");
+                logger.error("Database table 'zhitu_stock_k_line' does not exist");
                 System.err.println("请先创建数据库表（参考提供的SQL脚本）");
                 return;
             }
@@ -150,7 +150,6 @@ public class StockPredictionApp {
         } catch (Exception e) {
             logger.error("Application failed", e);
             System.err.println("应用程序执行失败: " + e.getMessage());
-            e.printStackTrace();
         } finally {
             // 清理资源
             DatabaseConfig.closeDataSource();
@@ -160,7 +159,7 @@ public class StockPredictionApp {
     /**
      * 创建示例数据（用于测试）
      */
-    private static void createSampleData(StockDataDao dao) {
+    private static void createSampleData(ZhituStockDataDao dao) {
         logger.info("Creating sample data for testing...");
 
         // 这里可以添加代码来生成或导入示例数据
