@@ -3,7 +3,6 @@ package com.sunyuyang.model;
 import com.sunyuyang.entity.ModelConfig;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.*;
-import org.deeplearning4j.nn.conf.inputs.InputType;
 import org.deeplearning4j.nn.conf.layers.*;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
@@ -20,7 +19,7 @@ import java.io.IOException;
 
 public class LSTMModel {
     private static final Logger logger = LoggerFactory.getLogger(LSTMModel.class);
-    private MultiLayerNetwork model;
+    public MultiLayerNetwork model;
     private ModelConfig config;
 
     public LSTMModel(ModelConfig config) {
@@ -54,15 +53,18 @@ public class LSTMModel {
     /**
      * 构建LSTM模型配置
      */
-    public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps) {
+    public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps, int timeSteps) {
         logger.info("Building LSTM model configuration...");
+        logger.info("Input features: {}, Output steps: {}, Time steps: {}",
+                numInputFeatures, numOutputSteps, timeSteps);
 
+        // 使用RnnOutputLayer来处理时间序列输出
         return new NeuralNetConfiguration.Builder()
                 .seed(12345)
                 .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                 .updater(new Adam(config.getLearningRate()))
                 .weightInit(WeightInit.XAVIER)
-                .l2(1e-4) // L2正则化
+                .l2(1e-4)
                 .list()
 
                 // 第一LSTM层
@@ -85,22 +87,20 @@ public class LSTMModel {
                         .dropOut(config.getDropoutRate())
                         .build())
 
-                // 全连接层
+                // 全连接层 - 使用DenseLayer而不是DenseLayer，因为在时间序列中每个时间步都需要应用
                 .layer(new DenseLayer.Builder()
                         .name("dense-layer")
                         .nOut(config.getDenseLayerSize())
                         .activation(Activation.RELU)
                         .build())
 
-                // 输出层
-                .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
+                // 输出层 - 使用RnnOutputLayer处理时间序列
+                .layer(new RnnOutputLayer.Builder(LossFunctions.LossFunction.MSE)
                         .name("output-layer")
                         .nOut(numOutputSteps)
-                        .activation(Activation.IDENTITY) // 回归问题使用线性激活
+                        .activation(Activation.IDENTITY)
                         .build())
 
-                // 设置输入类型（时间序列）
-                .setInputType(InputType.recurrent(numInputFeatures))
                 .build();
     }
 
@@ -108,8 +108,8 @@ public class LSTMModel {
      * 初始化模型
      */
     public void initialize(int numInputFeatures, int numOutputSteps, int timeSteps) {
-        MultiLayerConfiguration config = buildModelConfig(numInputFeatures, numOutputSteps, timeSteps);
-        this.model = new MultiLayerNetwork(config);
+        MultiLayerConfiguration modelConfig = buildModelConfig(numInputFeatures, numOutputSteps, timeSteps);
+        this.model = new MultiLayerNetwork(modelConfig);
         this.model.init();
 
         // 添加训练监听器
@@ -117,63 +117,9 @@ public class LSTMModel {
 
         logger.info("Model initialized with {} parameters",
                 this.model.numParams());
-        logger.info("Model input shape: [batch_size, {}, {}]", timeSteps, numInputFeatures);
+        logger.info("Model input shape: [batch_size, time_steps, features] -> [{}, {}, {}]",
+                config.getBatchSize(), timeSteps, numInputFeatures);
         logger.info("Model output shape: [batch_size, {}]", numOutputSteps);
-    }
-
-    /**
-     * 构建LSTM模型配置
-     */
-    public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps, int timeSteps) {
-        logger.info("Building LSTM model configuration...");
-        logger.info("Input features: {}, Output steps: {}, Time steps: {}",
-                numInputFeatures, numOutputSteps, timeSteps);
-
-        return new NeuralNetConfiguration.Builder()
-                .seed(12345)
-                .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
-                .updater(new Adam(config.getLearningRate()))
-                .weightInit(WeightInit.XAVIER)
-                .l2(1e-4) // L2正则化
-                .list()
-
-                // 第一LSTM层
-                .layer(new LSTM.Builder()
-                        .name("lstm-layer-1")
-                        .nIn(numInputFeatures)
-                        .nOut(config.getLstmLayer1Size())
-                        .activation(Activation.TANH)
-                        .gateActivationFunction(Activation.SIGMOID)
-                        .dropOut(config.getDropoutRate())
-                        .build())
-
-                // 第二LSTM层
-                .layer(new LSTM.Builder()
-                        .name("lstm-layer-2")
-                        .nIn(config.getLstmLayer1Size())
-                        .nOut(config.getLstmLayer2Size())
-                        .activation(Activation.TANH)
-                        .gateActivationFunction(Activation.SIGMOID)
-                        .dropOut(config.getDropoutRate())
-                        .build())
-
-                // 全连接层
-                .layer(new DenseLayer.Builder()
-                        .name("dense-layer")
-                        .nOut(config.getDenseLayerSize())
-                        .activation(Activation.RELU)
-                        .build())
-
-                // 输出层
-                .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
-                        .name("output-layer")
-                        .nOut(numOutputSteps)
-                        .activation(Activation.IDENTITY) // 回归问题使用线性激活
-                        .build())
-
-                // 设置输入类型（时间序列）
-                .setInputType(InputType.recurrent(numInputFeatures))
-                .build();
     }
 
     /**

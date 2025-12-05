@@ -27,7 +27,7 @@ public class ModelTrainingService {
     }
 
     /**
-     * 训练模型 - 修复版本
+     * 训练模型 - 修正版本
      */
     public TrainingResult trainModel(INDArray features, INDArray labels, String modelName) {
         logger.info("Starting model training...");
@@ -39,64 +39,60 @@ public class ModelTrainingService {
                 throw new IllegalArgumentException("训练数据为空");
             }
 
-            if (features.size(0) != labels.size(0)) {
-                logger.warn("特征和标签样本数不匹配: {} vs {}", features.size(0), labels.size(0));
-                // 取最小样本数
-                int minSamples = (int) Math.min(features.size(0), labels.size(0));
-                features = features.get(NDArrayIndex.interval(0, minSamples), NDArrayIndex.all());
-                labels = labels.get(NDArrayIndex.interval(0, minSamples), NDArrayIndex.all());
-                logger.info("调整后: 特征shape={}, 标签shape={}", features.shape(), labels.shape());
-            }
+            // 确保特征和标签样本数匹配
+            int minSamples = Math.min((int) features.size(0), (int) labels.size(0));
+            features = features.get(
+                    NDArrayIndex.interval(0, minSamples),
+                    NDArrayIndex.all(),
+                    NDArrayIndex.all()
+            );
+            labels = labels.get(
+                    NDArrayIndex.interval(0, minSamples),
+                    NDArrayIndex.all()
+            );
 
-            // 修正：将数据从 [batch, time_steps, features] 转换为 [batch, features, time_steps]
-            if (features.rank() == 3) {
-                // 当前维度: [batch_size, time_steps, features]
-                // 需要转换为: [batch_size, features, time_steps]
-                features = features.permute(0, 2, 1);
-                logger.info("修正后特征形状: {}", features.shape());
-            }
+            logger.info("对齐后数据: 特征shape={}, 标签shape={}", features.shape(), labels.shape());
 
             // 2. 划分训练集和测试集
             SplitResult splitResult = splitTrainTestSafe(features, labels, config.getTrainTestSplit());
 
-            // 3. 创建数据迭代器
-            DataSetIterator trainIterator = createDataSetIterator(
-                    splitResult.trainFeatures, splitResult.trainLabels, config.getBatchSize());
+            // 3. 初始化模型
+            int timeSteps = (int) features.size(1); // 时间步长
+            int numInputFeatures = (int) features.size(2); // 特征数
+            int numOutputSteps = config.getPredictSteps(); // 输出步长
 
-            DataSetIterator testIterator = createDataSetIterator(
-                    splitResult.testFeatures, splitResult.testLabels, config.getBatchSize());
+            logger.info("模型参数 - 时间步长: {}, 输入特征数: {}, 输出步长: {}",
+                    timeSteps, numInputFeatures, numOutputSteps);
 
-            // 4. 初始化模型 - 获取正确的输入特征数
-            int numInputFeatures;
-            int timeSteps = config.getTimeSteps();
-
-            if (features.rank() == 3) {
-                // 修正后: [样本数, 特征数, 时间步长]
-                numInputFeatures = (int) features.size(1);  // 第二维是特征数
-                timeSteps = (int) features.size(2);          // 第三维是时间步长
-                logger.info("使用3D特征，输入特征数: {}, 时间步长: {}", numInputFeatures, timeSteps);
-            } else {
-                // 2D数组: [样本数, 特征数]
-                numInputFeatures = (int) features.size(1);
-                logger.info("使用2D特征，输入特征数: {}", numInputFeatures);
-            }
-
-            // 创建模型
             LSTMModel lstmModel = new LSTMModel(config);
-            lstmModel.initialize(numInputFeatures, config.getPredictSteps(), timeSteps);
+            lstmModel.initialize(numInputFeatures, numOutputSteps, timeSteps);
             MultiLayerNetwork model = lstmModel.getModel();
 
-            // 5. 简化训练（不使用早停，直接训练）
+            // 4. 创建数据迭代器
+            DataSetIterator trainIterator = createDataSetIterator(
+                    splitResult.trainFeatures, splitResult.trainLabels, config.getBatchSize(), true);
+            DataSetIterator testIterator = createDataSetIterator(
+                    splitResult.testFeatures, splitResult.testLabels, config.getBatchSize(), false);
+
+            // 5. 训练模型
             logger.info("开始模型训练...");
-            int actualEpochs = Math.min(config.getEpochs(), 50); // 限制最大训练轮次
+            int actualEpochs = Math.min(config.getEpochs(), 50);
+
+            // 记录训练过程中的损失
+            List<Double> epochLosses = new ArrayList<>();
+
             for (int epoch = 0; epoch < actualEpochs; epoch++) {
+                // 训练一个epoch
                 model.fit(trainIterator);
                 trainIterator.reset();
 
+                // 计算当前epoch的平均损失
+                double epochLoss = calculateLoss(model, trainIterator);
+                epochLosses.add(epochLoss);
+
                 if ((epoch + 1) % 5 == 0) {
-                    double score = model.score();
-                    logger.info("训练轮次 {}/{} - 损失: {:.6f}",
-                            epoch + 1, actualEpochs, score);
+                    logger.info("训练轮次 {}/{} - 平均损失: {:.6f}",
+                            epoch + 1, actualEpochs, epochLoss);
                 }
             }
 
@@ -106,7 +102,8 @@ public class ModelTrainingService {
             // 7. 保存最终模型
             lstmModel.saveModel(modelName);
 
-            logger.info("模型训练完成");
+            logger.info("模型训练完成，最终损失: {:.6f}",
+                    epochLosses.isEmpty() ? 0.0 : epochLosses.get(epochLosses.size() - 1));
 
             return new TrainingResult(model, evalResult, null);
 
@@ -117,9 +114,27 @@ public class ModelTrainingService {
     }
 
     /**
-     * 创建数据集迭代器 - 修正维度顺序
+     * 计算模型在数据集上的平均损失
      */
-    private DataSetIterator createDataSetIterator(INDArray features, INDArray labels, int batchSize) {
+    private double calculateLoss(MultiLayerNetwork model, DataSetIterator iterator) {
+        double totalLoss = 0.0;
+        int batchCount = 0;
+
+        iterator.reset();
+        while (iterator.hasNext()) {
+            DataSet batch = iterator.next();
+            totalLoss += model.score(batch);  // score方法需要DataSet，不是DataSetIterator
+            batchCount++;
+        }
+
+        iterator.reset();
+        return batchCount > 0 ? totalLoss / batchCount : 0.0;
+    }
+
+    /**
+     * 创建数据集迭代器 - 修正版本
+     */
+    private DataSetIterator createDataSetIterator(INDArray features, INDArray labels, int batchSize, boolean shuffle) {
         List<DataSet> dataSets = new ArrayList<>();
 
         if (features.size(0) == 0 || labels.size(0) == 0) {
@@ -130,61 +145,32 @@ public class ModelTrainingService {
         int numSamples = (int) features.size(0);
 
         for (int i = 0; i < numSamples; i++) {
-            // 获取特征 - 确保维度为 [1, features, time_steps]
-            INDArray feature;
-            if (features.rank() == 3) {
-                // 维度已经是 [样本数, 特征数, 时间步长]
-                feature = features.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all(),
-                        NDArrayIndex.all()
-                );
-                // 保持3D形状 [1, features, time_steps]
-                feature = feature.reshape(1, (int) feature.size(0), (int) feature.size(1));
-            } else if (features.rank() == 2) {
-                // 如果是2D数组，需要重塑为3D
-                feature = features.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all()
-                );
-                // 重塑为3D: [1, features, 1] (单时间步)
-                feature = feature.reshape(1, (int) feature.size(0), 1);
-            } else {
-                throw new IllegalArgumentException("不支持的特征数组维度: rank=" + features.rank());
-            }
+            // 获取特征 - 保持3D形状 [1, time_steps, features]
+            INDArray feature = features.get(
+                    NDArrayIndex.point(i),
+                    NDArrayIndex.all(),
+                    NDArrayIndex.all()
+            ).reshape(1, (int) features.size(1), (int) features.size(2));
 
-            // 获取标签 - 应该是2D形状 [1, output_steps]
-            INDArray label;
-            if (labels.rank() == 2) {
-                label = labels.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all()
-                );
-                label = label.reshape(1, (int) label.size(0));
-            } else if (labels.rank() == 1) {
-                label = labels.get(NDArrayIndex.point(i));
-                label = label.reshape(1, 1);
-            } else if (labels.rank() == 3) {
-                // 如果是3D标签，取最后一个时间步
-                label = labels.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all(),
-                        NDArrayIndex.all()
-                );
-                label = label.get(NDArrayIndex.point((int) label.size(0) - 1), NDArrayIndex.all());
-                label = label.reshape(1, (int) label.size(0));
-            } else {
-                throw new IllegalArgumentException("不支持的标签数组维度: rank=" + labels.rank());
-            }
+            // 获取标签 - 2D形状 [1, output_steps]
+            INDArray label = labels.get(
+                    NDArrayIndex.point(i),
+                    NDArrayIndex.all()
+            ).reshape(1, (int) labels.size(1));
 
             dataSets.add(new DataSet(feature, label));
+        }
+
+        // 如果需要打乱数据
+        if (shuffle) {
+            java.util.Collections.shuffle(dataSets);
         }
 
         return new ListDataSetIterator<>(dataSets, Math.min(batchSize, dataSets.size()));
     }
 
     /**
-     * 安全的划分训练集和测试集 - 确保返回正确的维度顺序
+     * 安全的划分训练集和测试集
      */
     private SplitResult splitTrainTestSafe(INDArray features, INDArray labels, double splitRatio) {
         int totalSamples = (int) features.size(0);
@@ -215,7 +201,7 @@ public class ModelTrainingService {
     }
 
     /**
-     * 安全获取行数据 - 确保索引不超出范围
+     * 安全获取行数据
      */
     private INDArray getSafeRows(INDArray array, int start, int end) {
         int arrayRows = (int) array.size(0);
@@ -252,97 +238,6 @@ public class ModelTrainingService {
     }
 
     /**
-     * 划分训练集和测试集 - 修复版本
-     */
-    private SplitResult splitTrainTest(INDArray features, INDArray labels, double splitRatio) {
-        int totalSamples = (int) features.size(0);
-        int trainSize = (int) (totalSamples * splitRatio);
-
-        logger.info("Data split - Total: {} samples, Train: {} samples, Test: {} samples",
-                totalSamples, trainSize, totalSamples - trainSize);
-
-        // 根据数组维度选择正确的索引方式
-        INDArray trainFeatures, trainLabels, testFeatures, testLabels;
-
-        // 处理特征（可能是3D或2D）
-        if (features.rank() == 3) {
-            // 3D数组: [样本数, 时间步长, 特征数]
-            trainFeatures = features.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-            testFeatures = features.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-        } else if (features.rank() == 2) {
-            // 2D数组: [样本数, 特征数]
-            trainFeatures = features.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all()
-            );
-            testFeatures = features.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all()
-            );
-        } else {
-            throw new IllegalArgumentException("Unsupported features array dimensions: rank=" + features.rank());
-        }
-
-        // 处理标签（可能是2D或3D）
-        if (labels.rank() == 3) {
-            // 3D数组: [样本数, 时间步长, 预测步长]
-            trainLabels = labels.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-            testLabels = labels.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-        } else if (labels.rank() == 2) {
-            // 2D数组: [样本数, 预测步长] - 这是最常见的情况
-            trainLabels = labels.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all()
-            );
-            testLabels = labels.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all()
-            );
-        } else if (labels.rank() == 1) {
-            // 1D数组: [样本数]
-            trainLabels = labels.get(NDArrayIndex.interval(0, trainSize));
-            testLabels = labels.get(NDArrayIndex.interval(trainSize, totalSamples));
-        } else {
-            throw new IllegalArgumentException("Unsupported labels array dimensions: rank=" + labels.rank());
-        }
-
-        // 验证形状匹配
-        logger.info("Train features shape: {}", trainFeatures.shape());
-        logger.info("Train labels shape: {}", trainLabels.shape());
-        logger.info("Test features shape: {}", testFeatures.shape());
-        logger.info("Test labels shape: {}", testLabels.shape());
-
-        // 检查训练集和测试集的样本数是否匹配
-        if (trainFeatures.size(0) != trainLabels.size(0)) {
-            logger.warn("训练集样本数不匹配: 特征={}, 标签={}",
-                    trainFeatures.size(0), trainLabels.size(0));
-        }
-
-        if (testFeatures.size(0) != testLabels.size(0)) {
-            logger.warn("测试集样本数不匹配: 特征={}, 标签={}",
-                    testFeatures.size(0), testLabels.size(0));
-        }
-
-        return new SplitResult(trainFeatures, trainLabels, testFeatures, testLabels);
-    }
-
-    /**
      * 评估模型
      */
     private EvaluationResult evaluateModel(MultiLayerNetwork model, SplitResult splitResult) {
@@ -362,23 +257,6 @@ public class ModelTrainingService {
             return new EvaluationResult(Nd4j.create(0), Nd4j.create(0),
                     Nd4j.create(0), Nd4j.create(0));
         }
-    }
-
-    /**
-     * 计算标准差
-     */
-    private double calculateStd(List<Double> values, double mean) {
-        if (values.size() <= 1) {
-            return 0.0;
-        }
-
-        double sum = 0.0;
-        for (double value : values) {
-            double diff = value - mean;
-            sum += diff * diff;
-        }
-
-        return Math.sqrt(sum / (values.size() - 1));
     }
 
     /**

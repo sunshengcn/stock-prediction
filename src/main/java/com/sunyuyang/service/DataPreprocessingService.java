@@ -59,8 +59,7 @@ public class DataPreprocessingService {
         labelNormalizer.fit(alignedLabels);
         labelNormalizer.transform(alignedLabels);
 
-        // 4. 创建滑动窗口数据集 - 修正维度顺序
-        // 确保输出维度为 [samples, features, time_steps] 而不是 [samples, time_steps, features]
+        // 4. 创建滑动窗口数据集 - 使用DL4J期望的维度顺序: [samples, time_steps, features]
         INDArray windowedFeatures = createSlidingWindows(alignedFeatures, timeSteps);
         INDArray windowedLabels = createLabelWindows(alignedLabels, timeSteps, predictSteps);
 
@@ -72,16 +71,14 @@ public class DataPreprocessingService {
     }
 
     /**
-     * 创建滑动窗口特征 - 修正维度顺序
-     * 原版本：输出 [samples, time_steps, features]
-     * 修正版：输出 [samples, features, time_steps]
+     * 创建滑动窗口特征 - DL4J期望的维度顺序: [samples, time_steps, features]
      */
     private INDArray createSlidingWindows(INDArray features, int timeSteps) {
         int totalWindows = (int) features.size(0) - timeSteps + 1;
         int featureSize = (int) features.size(1);
 
-        // 创建正确维度的数组：[totalWindows, featureSize, timeSteps]
-        INDArray windowed = Nd4j.create(totalWindows, featureSize, timeSteps);
+        // 创建正确维度的数组: [totalWindows, timeSteps, featureSize]
+        INDArray windowed = Nd4j.create(totalWindows, timeSteps, featureSize);
 
         for (int i = 0; i < totalWindows; i++) {
             // 获取时间窗口内的特征数据
@@ -90,49 +87,21 @@ public class DataPreprocessingService {
                     NDArrayIndex.all()
             );
 
-            // 原始的window形状是 [timeSteps, featureSize]
-            // 我们需要转置为 [featureSize, timeSteps] 然后放入三维数组
-            // 首先转置窗口
-            INDArray transposedWindow = window.transpose();
-
-            // 将转置后的窗口放入三维数组的第i个切片
-            windowed.putSlice(i, transposedWindow);
+            // 将窗口放入三维数组的第i个切片
+            windowed.putSlice(i, window);
         }
 
         return windowed;
     }
 
     /**
-     * 替代方案：创建滑动窗口特征（使用维度置换）
-     * 如果上述方法有问题，可以使用这个替代方案
-     */
-    private INDArray createSlidingWindowsV2(INDArray features, int timeSteps) {
-        int totalWindows = (int) features.size(0) - timeSteps + 1;
-        int featureSize = (int) features.size(1);
-
-        // 按照原方法创建 [totalWindows, timeSteps, featureSize]
-        INDArray windowed = Nd4j.create(totalWindows, timeSteps, featureSize);
-
-        for (int i = 0; i < totalWindows; i++) {
-            INDArray window = features.get(
-                    NDArrayIndex.interval(i, i + timeSteps),
-                    NDArrayIndex.all()
-            );
-            windowed.putSlice(i, window);
-        }
-
-        // 使用维度置换转换为 [totalWindows, featureSize, timeSteps]
-        return windowed.permute(0, 2, 1);
-    }
-
-    /**
-     * 创建对应的标签窗口
+     * 创建对应的标签窗口 - 简化版本
      */
     private INDArray createLabelWindows(INDArray labels, int timeSteps, int predictSteps) {
-        int totalWindows = (int) labels.size(0) - timeSteps - predictSteps + 1;
+        int totalWindows = (int) labels.size(0) - timeSteps + 1;
 
+        // 确保有足够的样本
         if (totalWindows <= 0) {
-            // 如果窗口数量不足，创建一个空数组
             logger.warn("无法创建标签窗口，总窗口数: {}", totalWindows);
             return Nd4j.create(0, predictSteps);
         }
@@ -140,8 +109,18 @@ public class DataPreprocessingService {
         INDArray windowedLabels = Nd4j.create(totalWindows, predictSteps);
 
         for (int i = 0; i < totalWindows; i++) {
-            INDArray labelWindow = labels.getRow(i + timeSteps - 1);
-            windowedLabels.putRow(i, labelWindow);
+            // 取每个窗口最后一个时间点的标签
+            int labelIdx = i + timeSteps - 1;
+
+            if (labelIdx < labels.size(0)) {
+                // 获取标签行
+                INDArray labelRow = labels.getRow(labelIdx);
+                windowedLabels.putRow(i, labelRow);
+            } else {
+                // 如果索引超出范围，使用最后一个有效标签
+                INDArray lastLabel = labels.getRow((int) labels.size(0) - 1);
+                windowedLabels.putRow(i, lastLabel);
+            }
         }
 
         return windowedLabels;

@@ -17,9 +17,9 @@ public class StockPredictionApp {
     private static final Logger logger = LoggerFactory.getLogger(StockPredictionApp.class);
 
     // 配置
-    private static final String STOCK_CODE = "300624.SZ"; // 示例股票代码
+    private static final String STOCK_CODE = "300624.SZ";
     private static final String MODEL_NAME = "stock_predictor_v1";
-    private static final boolean RETRAIN_MODEL = true; // 是否重新训练模型
+    private static final boolean RETRAIN_MODEL = true;
 
     public static void main(String[] args) {
         logger.info("Starting Stock Prediction Application...");
@@ -30,7 +30,9 @@ public class StockPredictionApp {
             ZhituStockDataDao stockDataDao = new ZhituStockDataDao();
             DataPreprocessingService preprocessingService = new DataPreprocessingService();
             ModelTrainingService trainingService = new ModelTrainingService(modelConfig);
-            PredictionService predictionService = new PredictionService(stockDataDao, preprocessingService);
+
+            // 注意：这里先不初始化PredictionService，等模型训练/加载后再创建
+            PredictionService predictionService = null;
 
             // 2. 检查数据库连接
             if (!stockDataDao.checkTableExists()) {
@@ -41,7 +43,7 @@ public class StockPredictionApp {
 
             // 3. 获取数据
             LocalDateTime endDate = LocalDateTime.now();
-            LocalDateTime startDate = endDate.minusYears(3); // 过去三年
+            LocalDateTime startDate = endDate.minusYears(3);
 
             logger.info("Fetching data from {} to {}", startDate, endDate);
             List<ZhituStockKLine> klineData = stockDataDao.getKLineData(STOCK_CODE, startDate, endDate);
@@ -79,24 +81,13 @@ public class StockPredictionApp {
                         MODEL_NAME);
 
                 // 4.4 评估结果
-                trainingResult.getEvaluation().printMetrics();
-
-                // 4.5 获取特征维度信息
-                int numInputFeatures;
-                int timeSteps = modelConfig.getTimeSteps(); // 使用配置中的时间步长
-
-                if (processedData.getFeatures().rank() == 3) {
-                    numInputFeatures = (int) processedData.getFeatures().size(2);
-                    timeSteps = (int) processedData.getFeatures().size(1); // 也可以从数据中获取实际时间步长
-                    logger.info("使用3D特征，输入特征数: {}, 时间步长: {}", numInputFeatures, timeSteps);
-                } else {
-                    numInputFeatures = (int) processedData.getFeatures().size(1);
-                    logger.info("使用2D特征，输入特征数: {}", numInputFeatures);
+                if (trainingResult.getEvaluation() != null) {
+                    trainingResult.getEvaluation().printMetrics();
                 }
 
+                // 4.5 获取训练好的模型
                 lstmModel = new LSTMModel(modelConfig);
-                // 调用更新后的initialize方法，传入三个参数
-                lstmModel.initialize(numInputFeatures, modelConfig.getPredictSteps(), timeSteps);
+                lstmModel.model = trainingResult.getModel();
 
                 logger.info("Model training completed successfully");
 
@@ -118,7 +109,10 @@ public class StockPredictionApp {
             // 5. 打印模型信息
             System.out.println(lstmModel.getModelSummary());
 
-            // 6. 进行预测
+            // 6. 初始化预测服务
+            predictionService = new PredictionService(stockDataDao, preprocessingService);
+
+            // 7. 进行预测
             logger.info("Making predictions for the next 5 trading days...");
             PredictionService.PredictionResult predictionResult =
                     predictionService.predictFuturePrices(
@@ -127,10 +121,12 @@ public class StockPredictionApp {
                             modelConfig.getTimeSteps(),
                             modelConfig.getPredictSteps());
 
-            // 7. 显示预测结果
-            predictionResult.print();
+            // 8. 显示预测结果
+            if (predictionResult != null) {
+                predictionResult.print();
+            }
 
-            // 8. 可选：批量预测多个股票
+            // 9. 可选：批量预测多个股票
             if (args.length > 0) {
                 List<String> stockCodes = Arrays.asList(args);
                 logger.info("Batch predicting for {} stocks", stockCodes.size());
@@ -167,17 +163,5 @@ public class StockPredictionApp {
             // 清理资源
             DatabaseConfig.closeDataSource();
         }
-    }
-
-    /**
-     * 创建示例数据（用于测试）
-     */
-    private static void createSampleData(ZhituStockDataDao dao) {
-        logger.info("Creating sample data for testing...");
-
-        // 这里可以添加代码来生成或导入示例数据
-        // 实际应用中应从数据源获取真实数据
-
-        logger.info("Sample data creation complete");
     }
 }
