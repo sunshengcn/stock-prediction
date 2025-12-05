@@ -28,30 +28,6 @@ public class LSTMModel {
     }
 
     /**
-     * 加载模型
-     */
-    public static LSTMModel loadModel(String modelName) {
-        try {
-            File modelFile = new File("models/" + modelName + "/model.zip");
-
-            if (!modelFile.exists()) {
-                throw new IOException("Model file not found: " + modelFile.getPath());
-            }
-
-            MultiLayerNetwork loadedModel = ModelSerializer.restoreMultiLayerNetwork(modelFile);
-
-            LSTMModel lstmModel = new LSTMModel(ModelConfig.getDefaultConfig());
-            lstmModel.model = loadedModel;
-
-            logger.info("Model loaded from: {}", modelFile.getAbsolutePath());
-            return lstmModel;
-        } catch (IOException e) {
-            logger.error("Failed to load model", e);
-            throw new RuntimeException("Failed to load model", e);
-        }
-    }
-
-    /**
      * 构建LSTM模型配置 - 修复版本：正确处理时间序列预测
      */
     public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps) {
@@ -64,43 +40,25 @@ public class LSTMModel {
                 .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                 .updater(new Adam(config.getLearningRate()))
                 .weightInit(WeightInit.XAVIER)
-                .l2(1e-4) // L2正则化
+                .l2(1e-4)
                 .list()
 
                 // 第一LSTM层
                 .layer(new LSTM.Builder()
                         .name("lstm-layer-1")
-                        .nIn(numInputFeatures)  // 输入特征数
+                        .nIn(numInputFeatures)
                         .nOut(config.getLstmLayer1Size())
                         .activation(Activation.TANH)
                         .gateActivationFunction(Activation.SIGMOID)
                         .dropOut(config.getDropoutRate())
                         .build())
 
-                // 第二LSTM层
-                .layer(new LSTM.Builder()
-                        .name("lstm-layer-2")
-                        .nIn(config.getLstmLayer1Size())
-                        .nOut(config.getLstmLayer2Size())
-                        .activation(Activation.TANH)
-                        .gateActivationFunction(Activation.SIGMOID)
-                        .dropOut(config.getDropoutRate())
-                        .build())
-
-                // 全连接层
-                .layer(new DenseLayer.Builder()
-                        .name("dense-layer")
-                        .nIn(config.getLstmLayer2Size())
-                        .nOut(config.getDenseLayerSize())
-                        .activation(Activation.RELU)
-                        .build())
-
-                // 输出层
-                .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
+                // 关键修复：添加RnnOutputLayer而不是DenseLayer + OutputLayer
+                .layer(new RnnOutputLayer.Builder(LossFunctions.LossFunction.MSE)
                         .name("output-layer")
-                        .nIn(config.getDenseLayerSize())
-                        .nOut(numOutputSteps)
                         .activation(Activation.IDENTITY) // 回归问题使用线性激活
+                        .nIn(config.getLstmLayer1Size())
+                        .nOut(numOutputSteps) // 输出预测步长
                         .build())
 
                 // 设置输入类型（时间序列）
@@ -109,7 +67,7 @@ public class LSTMModel {
     }
 
     /**
-     * 替代方案：使用简化模型配置（单层LSTM）
+     * 替代方案：使用简化模型配置（单层LSTM + Dense层）
      */
     public MultiLayerConfiguration buildSimpleModelConfig(int numInputFeatures, int numOutputSteps) {
         logger.info("Building simple LSTM model configuration...");
@@ -132,12 +90,20 @@ public class LSTMModel {
                         .dropOut(config.getDropoutRate())
                         .build())
 
-                // 输出层
-                .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
-                        .name("output-layer")
+                // 关键：添加Dense层处理时间维度
+                .layer(new DenseLayer.Builder()
+                        .name("dense-layer")
                         .nIn(64)
-                        .nOut(numOutputSteps)
+                        .nOut(32)
+                        .activation(Activation.RELU)
+                        .build())
+
+                // 使用RnnOutputLayer处理时间序列输出
+                .layer(new RnnOutputLayer.Builder(LossFunctions.LossFunction.MSE)
+                        .name("output-layer")
                         .activation(Activation.IDENTITY)
+                        .nIn(32)
+                        .nOut(numOutputSteps)
                         .build())
 
                 .setInputType(InputType.recurrent(numInputFeatures))
@@ -148,6 +114,7 @@ public class LSTMModel {
      * 初始化模型
      */
     public void initialize(int numInputFeatures, int numOutputSteps) {
+        // 使用修复后的模型配置
         MultiLayerConfiguration config = buildModelConfig(numInputFeatures, numOutputSteps);
 
         // 如果你想使用简化模型，可以取消下面这行的注释：
@@ -216,4 +183,27 @@ public class LSTMModel {
         return summary.toString();
     }
 
+    /**
+     * 加载模型
+     */
+    public static LSTMModel loadModel(String modelName) {
+        try {
+            File modelFile = new File("models/" + modelName + "/model.zip");
+
+            if (!modelFile.exists()) {
+                throw new IOException("Model file not found: " + modelFile.getPath());
+            }
+
+            MultiLayerNetwork loadedModel = ModelSerializer.restoreMultiLayerNetwork(modelFile);
+
+            LSTMModel lstmModel = new LSTMModel(ModelConfig.getDefaultConfig());
+            lstmModel.model = loadedModel;
+
+            logger.info("Model loaded from: {}", modelFile.getAbsolutePath());
+            return lstmModel;
+        } catch (IOException e) {
+            logger.error("Failed to load model", e);
+            throw new RuntimeException("Failed to load model", e);
+        }
+    }
 }
