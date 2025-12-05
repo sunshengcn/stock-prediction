@@ -81,10 +81,22 @@ public class StockPredictionApp {
                 // 4.4 评估结果
                 trainingResult.getEvaluation().printMetrics();
 
+                // 4.5 获取特征维度信息
+                int numInputFeatures;
+                int timeSteps = modelConfig.getTimeSteps(); // 使用配置中的时间步长
+
+                if (processedData.getFeatures().rank() == 3) {
+                    numInputFeatures = (int) processedData.getFeatures().size(2);
+                    timeSteps = (int) processedData.getFeatures().size(1); // 也可以从数据中获取实际时间步长
+                    logger.info("使用3D特征，输入特征数: {}, 时间步长: {}", numInputFeatures, timeSteps);
+                } else {
+                    numInputFeatures = (int) processedData.getFeatures().size(1);
+                    logger.info("使用2D特征，输入特征数: {}", numInputFeatures);
+                }
+
                 lstmModel = new LSTMModel(modelConfig);
-                lstmModel.initialize(
-                        (int) processedData.getFeatures().size(2),
-                        modelConfig.getPredictSteps());
+                // 调用更新后的initialize方法，传入三个参数
+                lstmModel.initialize(numInputFeatures, modelConfig.getPredictSteps(), timeSteps);
 
                 logger.info("Model training completed successfully");
 
@@ -150,6 +162,7 @@ public class StockPredictionApp {
         } catch (Exception e) {
             logger.error("Application failed", e);
             System.err.println("应用程序执行失败: " + e.getMessage());
+            e.printStackTrace();
         } finally {
             // 清理资源
             DatabaseConfig.closeDataSource();

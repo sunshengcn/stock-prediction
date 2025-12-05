@@ -107,8 +107,8 @@ public class LSTMModel {
     /**
      * 初始化模型
      */
-    public void initialize(int numInputFeatures, int numOutputSteps) {
-        MultiLayerConfiguration config = buildModelConfig(numInputFeatures, numOutputSteps);
+    public void initialize(int numInputFeatures, int numOutputSteps, int timeSteps) {
+        MultiLayerConfiguration config = buildModelConfig(numInputFeatures, numOutputSteps, timeSteps);
         this.model = new MultiLayerNetwork(config);
         this.model.init();
 
@@ -117,6 +117,63 @@ public class LSTMModel {
 
         logger.info("Model initialized with {} parameters",
                 this.model.numParams());
+        logger.info("Model input shape: [batch_size, {}, {}]", timeSteps, numInputFeatures);
+        logger.info("Model output shape: [batch_size, {}]", numOutputSteps);
+    }
+
+    /**
+     * 构建LSTM模型配置
+     */
+    public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps, int timeSteps) {
+        logger.info("Building LSTM model configuration...");
+        logger.info("Input features: {}, Output steps: {}, Time steps: {}",
+                numInputFeatures, numOutputSteps, timeSteps);
+
+        return new NeuralNetConfiguration.Builder()
+                .seed(12345)
+                .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
+                .updater(new Adam(config.getLearningRate()))
+                .weightInit(WeightInit.XAVIER)
+                .l2(1e-4) // L2正则化
+                .list()
+
+                // 第一LSTM层
+                .layer(new LSTM.Builder()
+                        .name("lstm-layer-1")
+                        .nIn(numInputFeatures)
+                        .nOut(config.getLstmLayer1Size())
+                        .activation(Activation.TANH)
+                        .gateActivationFunction(Activation.SIGMOID)
+                        .dropOut(config.getDropoutRate())
+                        .build())
+
+                // 第二LSTM层
+                .layer(new LSTM.Builder()
+                        .name("lstm-layer-2")
+                        .nIn(config.getLstmLayer1Size())
+                        .nOut(config.getLstmLayer2Size())
+                        .activation(Activation.TANH)
+                        .gateActivationFunction(Activation.SIGMOID)
+                        .dropOut(config.getDropoutRate())
+                        .build())
+
+                // 全连接层
+                .layer(new DenseLayer.Builder()
+                        .name("dense-layer")
+                        .nOut(config.getDenseLayerSize())
+                        .activation(Activation.RELU)
+                        .build())
+
+                // 输出层
+                .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
+                        .name("output-layer")
+                        .nOut(numOutputSteps)
+                        .activation(Activation.IDENTITY) // 回归问题使用线性激活
+                        .build())
+
+                // 设置输入类型（时间序列）
+                .setInputType(InputType.recurrent(numInputFeatures))
+                .build();
     }
 
     /**

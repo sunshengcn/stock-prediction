@@ -14,6 +14,7 @@ import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class ModelTrainingService {
@@ -58,18 +59,29 @@ public class ModelTrainingService {
 
             // 4. 初始化模型 - 获取正确的输入特征数
             int numInputFeatures;
+            //int timeSteps = 60; // 从配置中获取或从数据中推断
+            // 替换为：
+            int timeSteps = config.getTimeSteps(); // 从配置中获取时间步长
+
             if (features.rank() == 3) {
                 // 3D数组: [样本数, 时间步长, 特征数]
                 numInputFeatures = (int) features.size(2);
-                logger.info("使用3D特征，输入特征数: {}", numInputFeatures);
+                timeSteps = (int) features.size(1);
+                logger.info("使用3D特征，输入特征数: {}, 时间步长: {}", numInputFeatures, timeSteps);
             } else {
                 // 2D数组: [样本数, 特征数]
                 numInputFeatures = (int) features.size(1);
                 logger.info("使用2D特征，输入特征数: {}", numInputFeatures);
             }
-
+            // 创建模型时传入时间步长信息
             LSTMModel lstmModel = new LSTMModel(config);
-            lstmModel.initialize(numInputFeatures, config.getPredictSteps());
+            //lstmModel.initialize(numInputFeatures, config.getPredictSteps(), timeSteps);
+
+            // 替换为：
+            if (features.rank() == 3) {
+                timeSteps = (int) features.size(1); // 从数据中获取实际时间步长
+            }
+            lstmModel.initialize(numInputFeatures, config.getPredictSteps(), timeSteps);
 
             MultiLayerNetwork model = lstmModel.getModel();
 
@@ -178,7 +190,7 @@ public class ModelTrainingService {
     }
 
     /**
-     * 创建数据集迭代器 - 修复版本，保持标签维度
+     * 创建数据集迭代器 - 修复版本，确保特征为3D，标签为2D
      */
     private DataSetIterator createDataSetIterator(INDArray features, INDArray labels, int batchSize) {
         List<DataSet> dataSets = new ArrayList<>();
@@ -191,7 +203,7 @@ public class ModelTrainingService {
         int numSamples = (int) features.size(0);
 
         for (int i = 0; i < numSamples; i++) {
-            // 根据数组维度选择正确的获取方式
+            // 获取特征 - 必须保持3D形状 [1, time_steps, features]
             INDArray feature;
             if (features.rank() == 3) {
                 // 3D数组: [样本数, 时间步长, 特征数]
@@ -200,35 +212,55 @@ public class ModelTrainingService {
                         NDArrayIndex.all(),
                         NDArrayIndex.all()
                 );
+                // 确保保持3D形状 [1, time_steps, features]
+                feature = feature.reshape(1, (int) feature.size(0), (int) feature.size(1));
             } else if (features.rank() == 2) {
-                // 2D数组: [样本数, 特征数]
+                // 如果是2D数组，需要重塑为3D
                 feature = features.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all()
                 );
+                // 重塑为3D: [1, 1, features]
+                feature = feature.reshape(1, 1, (int) feature.size(0));
             } else {
                 throw new IllegalArgumentException("不支持的特征数组维度: rank=" + features.rank());
             }
 
+            // 获取标签 - 应该是2D形状 [1, output_steps]
             INDArray label;
-            if (labels.rank() == 3) {
-                // 3D数组: [样本数, 时间步长, 预测步长]
+            if (labels.rank() == 2) {
+                // 2D数组: [样本数, 预测步长]
+                label = labels.get(
+                        NDArrayIndex.point(i),
+                        NDArrayIndex.all()
+                );
+                // 保持2D形状: [1, output_steps]
+                label = label.reshape(1, (int) label.size(0));
+            } else if (labels.rank() == 1) {
+                // 1D数组: [样本数]
+                label = labels.get(NDArrayIndex.point(i));
+                label = label.reshape(1, 1);
+            } else if (labels.rank() == 3) {
+                // 3D数组: [样本数, time_steps, output_steps] - 需要压缩为2D
                 label = labels.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all(),
                         NDArrayIndex.all()
                 );
-            } else if (labels.rank() == 2) {
-                // 2D数组: [样本数, 预测步长] - 关键修复：保持2D形状
-                label = labels.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all()
-                ).reshape(1, labels.size(1)); // 保持2D形状：[1, predictSteps]
-            } else if (labels.rank() == 1) {
-                // 1D数组: [样本数]
-                label = labels.get(NDArrayIndex.point(i)).reshape(1, 1);
+                // 压缩为2D: 取最后一个时间步的预测
+                label = label.get(NDArrayIndex.point((int) label.size(0) - 1), NDArrayIndex.all());
+                label = label.reshape(1, (int) label.size(0));
             } else {
                 throw new IllegalArgumentException("不支持的标签数组维度: rank=" + labels.rank());
+            }
+
+            // 验证维度
+            if (feature.rank() != 3) {
+                throw new IllegalStateException("特征必须是3D，实际为: " + feature.rank() + "D, 形状: " + Arrays.toString(feature.shape()));
+            }
+
+            if (label.rank() != 2) {
+                throw new IllegalStateException("标签必须是2D，实际为: " + label.rank() + "D, 形状: " + Arrays.toString(label.shape()));
             }
 
             dataSets.add(new DataSet(feature, label));
@@ -348,118 +380,6 @@ public class ModelTrainingService {
             return new EvaluationResult(Nd4j.create(0), Nd4j.create(0),
                     Nd4j.create(0), Nd4j.create(0));
         }
-    }
-
-    /**
-     * 简化版交叉验证
-     */
-    public CrossValidationResult crossValidate(INDArray features, INDArray labels, int folds) {
-        logger.info("Starting {}-fold cross validation", folds);
-
-        int totalSamples = (int) features.size(0);
-        if (totalSamples < folds) {
-            logger.warn("样本数少于折数，减少折数");
-            folds = Math.min(totalSamples, 2);
-        }
-
-        int samplesPerFold = totalSamples / folds;
-        List<Double> foldScores = new ArrayList<>();
-
-        logger.info("总样本: {}, 每折样本: {}", totalSamples, samplesPerFold);
-        logger.info("特征形状: {}, 标签形状: {}", features.shape(), labels.shape());
-
-        for (int fold = 0; fold < folds; fold++) {
-            int start = fold * samplesPerFold;
-            int end = (fold == folds - 1) ? totalSamples : (fold + 1) * samplesPerFold;
-
-            logger.info("第 {}/{} 折: 样本 {}-{}", fold + 1, folds, start, end);
-
-            // 获取验证集
-            INDArray valFeatures = getSafeRows(features, start, end);
-            INDArray valLabels = getSafeRows(labels, start, end);
-
-            // 创建训练集（排除验证集）
-            INDArray trainFeatures, trainLabels;
-
-            if (fold == 0) {
-                // 第一折：验证集在前，训练集在后
-                trainFeatures = getSafeRows(features, end, totalSamples);
-                trainLabels = getSafeRows(labels, end, totalSamples);
-            } else if (fold == folds - 1) {
-                // 最后一折：验证集在后，训练集在前
-                trainFeatures = getSafeRows(features, 0, start);
-                trainLabels = getSafeRows(labels, 0, start);
-            } else {
-                // 中间折：验证集在中间，训练集为前后两部分
-                INDArray firstPartFeatures = getSafeRows(features, 0, start);
-                INDArray firstPartLabels = getSafeRows(labels, 0, start);
-
-                INDArray secondPartFeatures = getSafeRows(features, end, totalSamples);
-                INDArray secondPartLabels = getSafeRows(labels, end, totalSamples);
-
-                // 合并两部分
-                trainFeatures = Nd4j.concat(0, firstPartFeatures, secondPartFeatures);
-                trainLabels = Nd4j.concat(0, firstPartLabels, secondPartLabels);
-            }
-
-            // 检查数据有效性
-            if (trainFeatures.size(0) == 0 || trainLabels.size(0) == 0) {
-                logger.warn("第 {} 折训练集为空，跳过", fold + 1);
-                continue;
-            }
-
-            try {
-                DataSetIterator trainIterator = createDataSetIterator(trainFeatures, trainLabels, config.getBatchSize());
-
-                // 创建验证集
-                DataSet validationDataSet = new DataSet(valFeatures, valLabels);
-
-                // 重新初始化模型用于当前折
-                LSTMModel lstmModel = new LSTMModel(config);
-
-                // 获取正确的输入特征数
-                int numInputFeatures;
-                if (features.rank() == 3) {
-                    numInputFeatures = (int) features.size(2);
-                } else {
-                    numInputFeatures = (int) features.size(1);
-                }
-
-                lstmModel.initialize(numInputFeatures, config.getPredictSteps());
-
-                MultiLayerNetwork model = lstmModel.getModel();
-
-                // 简化训练：只训练少量轮次
-                int epochsPerFold = Math.min(5, config.getEpochs());
-                for (int epoch = 0; epoch < epochsPerFold; epoch++) {
-                    model.fit(trainIterator);
-                    trainIterator.reset();
-                }
-
-                // 计算验证集损失
-                double valLoss = model.score(validationDataSet);
-                foldScores.add(valLoss);
-
-                logger.info("第 {}/{} 折完成. 验证损失: {}", fold + 1, folds, valLoss);
-
-            } catch (Exception e) {
-                logger.error("第 {} 折错误", fold + 1, e);
-                // 继续下一折
-            }
-        }
-
-        if (foldScores.isEmpty()) {
-            logger.error("所有折都失败!");
-            return new CrossValidationResult(Double.NaN, Double.NaN, foldScores);
-        }
-
-        // 计算平均得分
-        double avgScore = foldScores.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
-        double stdScore = calculateStd(foldScores, avgScore);
-
-        logger.info("交叉验证完成. 平均得分: {}, 标准差: {}", avgScore, stdScore);
-
-        return new CrossValidationResult(avgScore, stdScore, foldScores);
     }
 
     /**
