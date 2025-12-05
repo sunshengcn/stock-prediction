@@ -13,6 +13,7 @@ import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,10 +51,10 @@ public class ModelTrainingService {
             SplitResult splitResult = splitTrainTestSafe(features, labels, config.getTrainTestSplit());
 
             // 3. 创建数据迭代器
-            DataSetIterator trainIterator = createDataSetIterator(
+            DataSetIterator trainIterator = createDataSetIteratorFixed(
                     splitResult.trainFeatures, splitResult.trainLabels, config.getBatchSize());
 
-            DataSetIterator testIterator = createDataSetIterator(
+            DataSetIterator testIterator = createDataSetIteratorFixed(
                     splitResult.testFeatures, splitResult.testLabels, config.getBatchSize());
 
             // 4. 初始化模型 - 获取正确的输入特征数
@@ -178,9 +179,9 @@ public class ModelTrainingService {
     }
 
     /**
-     * 创建数据集迭代器 - 修复版本，保持标签维度
+     * 创建数据集迭代器 - 修复版本，正确处理3D数据
      */
-    private DataSetIterator createDataSetIterator(INDArray features, INDArray labels, int batchSize) {
+    private DataSetIterator createDataSetIteratorFixed(INDArray features, INDArray labels, int batchSize) {
         List<DataSet> dataSets = new ArrayList<>();
 
         if (features.size(0) == 0 || labels.size(0) == 0) {
@@ -195,17 +196,26 @@ public class ModelTrainingService {
             INDArray feature;
             if (features.rank() == 3) {
                 // 3D数组: [样本数, 时间步长, 特征数]
+                // 关键修复：使用point(i)保持3D形状 [1, timeSteps, features]
                 feature = features.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all(),
                         NDArrayIndex.all()
                 );
+                // 确保feature是3D形状 [1, timeSteps, features]
+                if (feature.rank() == 2) {
+                    // 如果是2D，添加batch维度
+                    feature = feature.reshape(1, feature.size(0), feature.size(1));
+                }
+                logger.debug("第{}个样本特征形状: {}", i, feature.shape());
             } else if (features.rank() == 2) {
                 // 2D数组: [样本数, 特征数]
                 feature = features.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all()
                 );
+                // 对于LSTM，需要3D输入 [1, 1, features]
+                feature = feature.reshape(1, 1, feature.size(0));
             } else {
                 throw new IllegalArgumentException("不支持的特征数组维度: rank=" + features.rank());
             }
@@ -218,114 +228,42 @@ public class ModelTrainingService {
                         NDArrayIndex.all(),
                         NDArrayIndex.all()
                 );
+                // 确保label是3D形状 [1, timeSteps, predictSteps]
+                if (label.rank() == 2) {
+                    label = label.reshape(1, label.size(0), label.size(1));
+                }
             } else if (labels.rank() == 2) {
-                // 2D数组: [样本数, 预测步长] - 关键修复：保持2D形状
+                // 2D数组: [样本数, 预测步长] - 最常见情况
                 label = labels.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all()
-                ).reshape(1, labels.size(1)); // 保持2D形状：[1, predictSteps]
+                );
+                // 关键修复：重塑为3D [1, 1, predictSteps]
+                label = label.reshape(1, 1, label.size(0));
             } else if (labels.rank() == 1) {
                 // 1D数组: [样本数]
-                label = labels.get(NDArrayIndex.point(i)).reshape(1, 1);
+                label = labels.get(NDArrayIndex.point(i));
+                label = label.reshape(1, 1, 1);
             } else {
                 throw new IllegalArgumentException("不支持的标签数组维度: rank=" + labels.rank());
             }
 
+            logger.debug("第{}个样本标签形状: {}", i, label.shape());
             dataSets.add(new DataSet(feature, label));
+
+            // 调试：打印第一个样本的形状
+            if (i == 0) {
+                logger.info("第一个样本 - 特征形状: {}, 标签形状: {}", feature.shape(), label.shape());
+            }
         }
 
-        return new ListDataSetIterator<>(dataSets, Math.min(batchSize, dataSets.size()));
-    }
-
-    /**
-     * 划分训练集和测试集 - 修复版本
-     */
-    private SplitResult splitTrainTest(INDArray features, INDArray labels, double splitRatio) {
-        int totalSamples = (int) features.size(0);
-        int trainSize = (int) (totalSamples * splitRatio);
-
-        logger.info("Data split - Total: {} samples, Train: {} samples, Test: {} samples",
-                totalSamples, trainSize, totalSamples - trainSize);
-
-        // 根据数组维度选择正确的索引方式
-        INDArray trainFeatures, trainLabels, testFeatures, testLabels;
-
-        // 处理特征（可能是3D或2D）
-        if (features.rank() == 3) {
-            // 3D数组: [样本数, 时间步长, 特征数]
-            trainFeatures = features.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-            testFeatures = features.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-        } else if (features.rank() == 2) {
-            // 2D数组: [样本数, 特征数]
-            trainFeatures = features.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all()
-            );
-            testFeatures = features.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all()
-            );
-        } else {
-            throw new IllegalArgumentException("Unsupported features array dimensions: rank=" + features.rank());
+        int actualBatchSize = Math.min(batchSize, dataSets.size());
+        if (actualBatchSize == 0) {
+            actualBatchSize = 1;
         }
 
-        // 处理标签（可能是2D或3D）
-        if (labels.rank() == 3) {
-            // 3D数组: [样本数, 时间步长, 预测步长]
-            trainLabels = labels.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-            testLabels = labels.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all(),
-                    NDArrayIndex.all()
-            );
-        } else if (labels.rank() == 2) {
-            // 2D数组: [样本数, 预测步长] - 这是最常见的情况
-            trainLabels = labels.get(
-                    NDArrayIndex.interval(0, trainSize),
-                    NDArrayIndex.all()
-            );
-            testLabels = labels.get(
-                    NDArrayIndex.interval(trainSize, totalSamples),
-                    NDArrayIndex.all()
-            );
-        } else if (labels.rank() == 1) {
-            // 1D数组: [样本数]
-            trainLabels = labels.get(NDArrayIndex.interval(0, trainSize));
-            testLabels = labels.get(NDArrayIndex.interval(trainSize, totalSamples));
-        } else {
-            throw new IllegalArgumentException("Unsupported labels array dimensions: rank=" + labels.rank());
-        }
-
-        // 验证形状匹配
-        logger.info("Train features shape: {}", trainFeatures.shape());
-        logger.info("Train labels shape: {}", trainLabels.shape());
-        logger.info("Test features shape: {}", testFeatures.shape());
-        logger.info("Test labels shape: {}", testLabels.shape());
-
-        // 检查训练集和测试集的样本数是否匹配
-        if (trainFeatures.size(0) != trainLabels.size(0)) {
-            logger.warn("训练集样本数不匹配: 特征={}, 标签={}",
-                    trainFeatures.size(0), trainLabels.size(0));
-        }
-
-        if (testFeatures.size(0) != testLabels.size(0)) {
-            logger.warn("测试集样本数不匹配: 特征={}, 标签={}",
-                    testFeatures.size(0), testLabels.size(0));
-        }
-
-        return new SplitResult(trainFeatures, trainLabels, testFeatures, testLabels);
+        logger.info("创建数据迭代器: 样本数={}, batch大小={}", dataSets.size(), actualBatchSize);
+        return new ListDataSetIterator<>(dataSets, actualBatchSize);
     }
 
     /**
@@ -333,12 +271,14 @@ public class ModelTrainingService {
      */
     private EvaluationResult evaluateModel(MultiLayerNetwork model, SplitResult splitResult) {
         try {
-            // 训练集评估
-            INDArray trainPredictions = model.output(splitResult.trainFeatures);
+            // 训练集评估 - 关键修复：确保输入是3D
+            INDArray trainFeatures3D = ensure3D(splitResult.trainFeatures);
+            INDArray trainPredictions = model.output(trainFeatures3D);
             INDArray trainActual = splitResult.trainLabels;
 
             // 测试集评估
-            INDArray testPredictions = model.output(splitResult.testFeatures);
+            INDArray testFeatures3D = ensure3D(splitResult.testFeatures);
+            INDArray testPredictions = model.output(testFeatures3D);
             INDArray testActual = splitResult.testLabels;
 
             return new EvaluationResult(trainPredictions, trainActual, testPredictions, testActual);
@@ -347,6 +287,20 @@ public class ModelTrainingService {
             // 返回空评估结果
             return new EvaluationResult(Nd4j.create(0), Nd4j.create(0),
                     Nd4j.create(0), Nd4j.create(0));
+        }
+    }
+
+    /**
+     * 确保输入是3D形状 [batchSize, timeSteps, features]
+     */
+    private INDArray ensure3D(INDArray input) {
+        if (input.rank() == 3) {
+            return input;
+        } else if (input.rank() == 2) {
+            // 如果是2D，添加时间步维度 [batchSize, 1, features]
+            return input.reshape(input.size(0), 1, input.size(1));
+        } else {
+            throw new IllegalArgumentException("无法处理输入维度: rank=" + input.rank());
         }
     }
 
@@ -409,10 +363,10 @@ public class ModelTrainingService {
             }
 
             try {
-                DataSetIterator trainIterator = createDataSetIterator(trainFeatures, trainLabels, config.getBatchSize());
+                DataSetIterator trainIterator = createDataSetIteratorFixed(trainFeatures, trainLabels, config.getBatchSize());
 
                 // 创建验证集
-                DataSet validationDataSet = new DataSet(valFeatures, valLabels);
+                DataSet validationDataSet = new DataSet(ensure3D(valFeatures), valLabels);
 
                 // 重新初始化模型用于当前折
                 LSTMModel lstmModel = new LSTMModel(config);
