@@ -21,7 +21,7 @@ import java.io.IOException;
 public class LSTMModel {
     private static final Logger logger = LoggerFactory.getLogger(LSTMModel.class);
     private MultiLayerNetwork model;
-    private ModelConfig config;
+    private final ModelConfig config;
 
     public LSTMModel(ModelConfig config) {
         this.config = config;
@@ -52,10 +52,12 @@ public class LSTMModel {
     }
 
     /**
-     * 构建LSTM模型配置
+     * 构建LSTM模型配置 - 修复版本：正确处理时间序列预测
      */
     public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps) {
         logger.info("Building LSTM model configuration...");
+        logger.info("Input features: {}, Output steps: {}, Time steps: {}",
+                numInputFeatures, numOutputSteps, config.getTimeSteps());
 
         return new NeuralNetConfiguration.Builder()
                 .seed(12345)
@@ -68,7 +70,7 @@ public class LSTMModel {
                 // 第一LSTM层
                 .layer(new LSTM.Builder()
                         .name("lstm-layer-1")
-                        .nIn(numInputFeatures)
+                        .nIn(numInputFeatures)  // 输入特征数
                         .nOut(config.getLstmLayer1Size())
                         .activation(Activation.TANH)
                         .gateActivationFunction(Activation.SIGMOID)
@@ -88,6 +90,7 @@ public class LSTMModel {
                 // 全连接层
                 .layer(new DenseLayer.Builder()
                         .name("dense-layer")
+                        .nIn(config.getLstmLayer2Size())
                         .nOut(config.getDenseLayerSize())
                         .activation(Activation.RELU)
                         .build())
@@ -95,6 +98,7 @@ public class LSTMModel {
                 // 输出层
                 .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
                         .name("output-layer")
+                        .nIn(config.getDenseLayerSize())
                         .nOut(numOutputSteps)
                         .activation(Activation.IDENTITY) // 回归问题使用线性激活
                         .build())
@@ -105,18 +109,58 @@ public class LSTMModel {
     }
 
     /**
+     * 替代方案：使用简化模型配置（单层LSTM）
+     */
+    public MultiLayerConfiguration buildSimpleModelConfig(int numInputFeatures, int numOutputSteps) {
+        logger.info("Building simple LSTM model configuration...");
+
+        return new NeuralNetConfiguration.Builder()
+                .seed(12345)
+                .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
+                .updater(new Adam(config.getLearningRate()))
+                .weightInit(WeightInit.XAVIER)
+                .l2(1e-4)
+                .list()
+
+                // 单层LSTM
+                .layer(new LSTM.Builder()
+                        .name("lstm-layer")
+                        .nIn(numInputFeatures)
+                        .nOut(64)
+                        .activation(Activation.TANH)
+                        .gateActivationFunction(Activation.SIGMOID)
+                        .dropOut(config.getDropoutRate())
+                        .build())
+
+                // 输出层
+                .layer(new OutputLayer.Builder(LossFunctions.LossFunction.MSE)
+                        .name("output-layer")
+                        .nIn(64)
+                        .nOut(numOutputSteps)
+                        .activation(Activation.IDENTITY)
+                        .build())
+
+                .setInputType(InputType.recurrent(numInputFeatures))
+                .build();
+    }
+
+    /**
      * 初始化模型
      */
     public void initialize(int numInputFeatures, int numOutputSteps) {
         MultiLayerConfiguration config = buildModelConfig(numInputFeatures, numOutputSteps);
+
+        // 如果你想使用简化模型，可以取消下面这行的注释：
+        // MultiLayerConfiguration config = buildSimpleModelConfig(numInputFeatures, numOutputSteps);
+
         this.model = new MultiLayerNetwork(config);
         this.model.init();
 
         // 添加训练监听器
         this.model.setListeners(new ScoreIterationListener(100));
 
-        logger.info("Model initialized with {} parameters",
-                this.model.numParams());
+        logger.info("Model initialized with {} parameters", this.model.numParams());
+        logger.info("Model summary:\n{}", getModelSummary());
     }
 
     /**
@@ -171,4 +215,5 @@ public class LSTMModel {
 
         return summary.toString();
     }
+
 }

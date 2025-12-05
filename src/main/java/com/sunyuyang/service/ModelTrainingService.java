@@ -192,58 +192,65 @@ public class ModelTrainingService {
         int numSamples = (int) features.size(0);
 
         for (int i = 0; i < numSamples; i++) {
-            // 根据数组维度选择正确的获取方式
+            // 特征处理：调整维度顺序
             INDArray feature;
             if (features.rank() == 3) {
                 // 3D数组: [样本数, 时间步长, 特征数]
-                // 关键修复：使用point(i)保持3D形状 [1, timeSteps, features]
+                // 获取单个样本: [timeSteps, features]
                 feature = features.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all(),
                         NDArrayIndex.all()
                 );
-                // 确保feature是3D形状 [1, timeSteps, features]
-                if (feature.rank() == 2) {
-                    // 如果是2D，添加batch维度
-                    feature = feature.reshape(1, feature.size(0), feature.size(1));
-                }
-                logger.debug("第{}个样本特征形状: {}", i, feature.shape());
-            } else if (features.rank() == 2) {
-                // 2D数组: [样本数, 特征数]
-                feature = features.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all()
-                );
-                // 对于LSTM，需要3D输入 [1, 1, features]
-                feature = feature.reshape(1, 1, feature.size(0));
+
+                // Deeplearning4j LSTM期望的顺序是: [batchSize, features, timeSteps]
+                // 所以我们需要转置: [timeSteps, features] -> [features, timeSteps]
+                feature = feature.transpose();
+
+                // 添加batch维度: [features, timeSteps] -> [1, features, timeSteps]
+                feature = feature.reshape(1, (int)feature.size(0), (int)feature.size(1));
+
+                logger.debug("第{}个样本特征形状(调整后): {}", i, feature.shape());
             } else {
                 throw new IllegalArgumentException("不支持的特征数组维度: rank=" + features.rank());
             }
 
+            // 关键修复：标签处理
             INDArray label;
             if (labels.rank() == 3) {
-                // 3D数组: [样本数, 时间步长, 预测步长]
+                // 3D标签: [样本数, 预测步长, 1] 或 [样本数, 时间步长, 预测步长]
                 label = labels.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all(),
                         NDArrayIndex.all()
                 );
-                // 确保label是3D形状 [1, timeSteps, predictSteps]
-                if (label.rank() == 2) {
-                    label = label.reshape(1, label.size(0), label.size(1));
+
+                // 简化：如果是3D，取最后一个时间步
+                if (label.size(1) > 1) {
+                    // 取最后一个时间步 [batchSize, 1, predictSteps]
+                    label = label.get(
+                            NDArrayIndex.point(0),
+                            NDArrayIndex.point((int)label.size(1) - 1),
+                            NDArrayIndex.all()
+                    );
                 }
             } else if (labels.rank() == 2) {
-                // 2D数组: [样本数, 预测步长] - 最常见情况
+                // 2D标签: [样本数, 预测步长] - 最常见情况
                 label = labels.get(
                         NDArrayIndex.point(i),
                         NDArrayIndex.all()
                 );
-                // 关键修复：重塑为3D [1, 1, predictSteps]
-                label = label.reshape(1, 1, label.size(0));
-            } else if (labels.rank() == 1) {
-                // 1D数组: [样本数]
-                label = labels.get(NDArrayIndex.point(i));
-                label = label.reshape(1, 1, 1);
+
+                // 关键修复：LSTM输出层期望的标签形状
+                // 对于单输出时间序列预测，标签应该是 [batchSize, predictSteps, 1]
+                // 但我们也可以使用 [batchSize, predictSteps] 并让模型自动处理
+
+                // 方法1：保持为2D，但在训练时注意
+                // 重塑为 [1, predictSteps]
+                label = label.reshape(1, label.size(0));
+
+                // 方法2：或者转换为3D [1, 1, predictSteps]
+                // label = label.reshape(1, 1, label.size(0));
             } else {
                 throw new IllegalArgumentException("不支持的标签数组维度: rank=" + labels.rank());
             }
@@ -530,5 +537,42 @@ public class ModelTrainingService {
             System.out.printf("标准差: %.6f%n", stdScore);
             System.out.println("各折得分: " + foldScores);
         }
+    }
+
+    /**
+     * 创建数据集迭代器 - 简化版本
+     */
+    private DataSetIterator createSimpleDataSetIterator(INDArray features, INDArray labels, int batchSize) {
+        List<DataSet> dataSets = new ArrayList<>();
+
+        if (features.size(0) == 0 || labels.size(0) == 0) {
+            logger.warn("创建迭代器时发现空数据集");
+            return new ListDataSetIterator<>(dataSets, batchSize);
+        }
+
+        int numSamples = (int) features.size(0);
+
+        for (int i = 0; i < numSamples; i++) {
+            INDArray feature = features.get(
+                    NDArrayIndex.point(i),
+                    NDArrayIndex.all(),
+                    NDArrayIndex.all()
+            );
+
+            INDArray label = labels.get(
+                    NDArrayIndex.point(i),
+                    NDArrayIndex.all()
+            );
+
+            dataSets.add(new DataSet(feature, label));
+        }
+
+        int actualBatchSize = Math.min(batchSize, dataSets.size());
+        if (actualBatchSize == 0) {
+            actualBatchSize = 1;
+        }
+
+        logger.info("创建数据迭代器: 样本数={}, batch大小={}", dataSets.size(), actualBatchSize);
+        return new ListDataSetIterator<>(dataSets, actualBatchSize);
     }
 }

@@ -12,6 +12,16 @@ public class ModelConfig {
     private double learningRate = 0.001; // 学习率
     private double dropoutRate = 0.2;    // Dropout率
 
+    private String modelVariant = "default"; // 默认使用标准模型
+
+    public String getModelVariant() {
+        return modelVariant;
+    }
+
+    public void setModelVariant(String modelVariant) {
+        this.modelVariant = modelVariant;
+    }
+
     public static ModelConfig getDefaultConfig() {
         return new ModelConfig();
     }
