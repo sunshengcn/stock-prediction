@@ -13,6 +13,7 @@ import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.NDArrayIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -47,6 +48,14 @@ public class ModelTrainingService {
                 logger.info("调整后: 特征shape={}, 标签shape={}", features.shape(), labels.shape());
             }
 
+            // 修正：将数据从 [batch, time_steps, features] 转换为 [batch, features, time_steps]
+            if (features.rank() == 3) {
+                // 当前维度: [batch_size, time_steps, features]
+                // 需要转换为: [batch_size, features, time_steps]
+                features = features.permute(0, 2, 1);
+                logger.info("修正后特征形状: {}", features.shape());
+            }
+
             // 2. 划分训练集和测试集
             SplitResult splitResult = splitTrainTestSafe(features, labels, config.getTrainTestSplit());
 
@@ -59,30 +68,22 @@ public class ModelTrainingService {
 
             // 4. 初始化模型 - 获取正确的输入特征数
             int numInputFeatures;
-            //int timeSteps = 60; // 从配置中获取或从数据中推断
-            // 替换为：
-            int timeSteps = config.getTimeSteps(); // 从配置中获取时间步长
+            int timeSteps = config.getTimeSteps();
 
             if (features.rank() == 3) {
-                // 3D数组: [样本数, 时间步长, 特征数]
-                numInputFeatures = (int) features.size(2);
-                timeSteps = (int) features.size(1);
+                // 修正后: [样本数, 特征数, 时间步长]
+                numInputFeatures = (int) features.size(1);  // 第二维是特征数
+                timeSteps = (int) features.size(2);          // 第三维是时间步长
                 logger.info("使用3D特征，输入特征数: {}, 时间步长: {}", numInputFeatures, timeSteps);
             } else {
                 // 2D数组: [样本数, 特征数]
                 numInputFeatures = (int) features.size(1);
                 logger.info("使用2D特征，输入特征数: {}", numInputFeatures);
             }
-            // 创建模型时传入时间步长信息
+
+            // 创建模型
             LSTMModel lstmModel = new LSTMModel(config);
-            //lstmModel.initialize(numInputFeatures, config.getPredictSteps(), timeSteps);
-
-            // 替换为：
-            if (features.rank() == 3) {
-                timeSteps = (int) features.size(1); // 从数据中获取实际时间步长
-            }
             lstmModel.initialize(numInputFeatures, config.getPredictSteps(), timeSteps);
-
             MultiLayerNetwork model = lstmModel.getModel();
 
             // 5. 简化训练（不使用早停，直接训练）
@@ -116,7 +117,74 @@ public class ModelTrainingService {
     }
 
     /**
-     * 安全的划分训练集和测试集 - 修复数组索引问题
+     * 创建数据集迭代器 - 修正维度顺序
+     */
+    private DataSetIterator createDataSetIterator(INDArray features, INDArray labels, int batchSize) {
+        List<DataSet> dataSets = new ArrayList<>();
+
+        if (features.size(0) == 0 || labels.size(0) == 0) {
+            logger.warn("创建迭代器时发现空数据集");
+            return new ListDataSetIterator<>(dataSets, batchSize);
+        }
+
+        int numSamples = (int) features.size(0);
+
+        for (int i = 0; i < numSamples; i++) {
+            // 获取特征 - 确保维度为 [1, features, time_steps]
+            INDArray feature;
+            if (features.rank() == 3) {
+                // 维度已经是 [样本数, 特征数, 时间步长]
+                feature = features.get(
+                        NDArrayIndex.point(i),
+                        NDArrayIndex.all(),
+                        NDArrayIndex.all()
+                );
+                // 保持3D形状 [1, features, time_steps]
+                feature = feature.reshape(1, (int) feature.size(0), (int) feature.size(1));
+            } else if (features.rank() == 2) {
+                // 如果是2D数组，需要重塑为3D
+                feature = features.get(
+                        NDArrayIndex.point(i),
+                        NDArrayIndex.all()
+                );
+                // 重塑为3D: [1, features, 1] (单时间步)
+                feature = feature.reshape(1, (int) feature.size(0), 1);
+            } else {
+                throw new IllegalArgumentException("不支持的特征数组维度: rank=" + features.rank());
+            }
+
+            // 获取标签 - 应该是2D形状 [1, output_steps]
+            INDArray label;
+            if (labels.rank() == 2) {
+                label = labels.get(
+                        NDArrayIndex.point(i),
+                        NDArrayIndex.all()
+                );
+                label = label.reshape(1, (int) label.size(0));
+            } else if (labels.rank() == 1) {
+                label = labels.get(NDArrayIndex.point(i));
+                label = label.reshape(1, 1);
+            } else if (labels.rank() == 3) {
+                // 如果是3D标签，取最后一个时间步
+                label = labels.get(
+                        NDArrayIndex.point(i),
+                        NDArrayIndex.all(),
+                        NDArrayIndex.all()
+                );
+                label = label.get(NDArrayIndex.point((int) label.size(0) - 1), NDArrayIndex.all());
+                label = label.reshape(1, (int) label.size(0));
+            } else {
+                throw new IllegalArgumentException("不支持的标签数组维度: rank=" + labels.rank());
+            }
+
+            dataSets.add(new DataSet(feature, label));
+        }
+
+        return new ListDataSetIterator<>(dataSets, Math.min(batchSize, dataSets.size()));
+    }
+
+    /**
+     * 安全的划分训练集和测试集 - 确保返回正确的维度顺序
      */
     private SplitResult splitTrainTestSafe(INDArray features, INDArray labels, double splitRatio) {
         int totalSamples = (int) features.size(0);
@@ -136,18 +204,12 @@ public class ModelTrainingService {
         logger.info("数据划分 - 总样本: {}, 训练集: {}, 测试集: {}",
                 totalSamples, trainSize, totalSamples - trainSize);
 
-        // 使用安全的索引获取方法
+        // 获取数据
         INDArray trainFeatures = getSafeRows(features, 0, trainSize);
         INDArray testFeatures = getSafeRows(features, trainSize, totalSamples);
 
         INDArray trainLabels = getSafeRows(labels, 0, trainSize);
         INDArray testLabels = getSafeRows(labels, trainSize, totalSamples);
-
-        // 验证形状匹配
-        logger.info("训练特征形状: {}", trainFeatures.shape());
-        logger.info("训练标签形状: {}", trainLabels.shape());
-        logger.info("测试特征形状: {}", testFeatures.shape());
-        logger.info("测试标签形状: {}", testLabels.shape());
 
         return new SplitResult(trainFeatures, trainLabels, testFeatures, testLabels);
     }
@@ -187,86 +249,6 @@ public class ModelTrainingService {
         } else {
             return array.get(NDArrayIndex.interval(start, end));
         }
-    }
-
-    /**
-     * 创建数据集迭代器 - 修复版本，确保特征为3D，标签为2D
-     */
-    private DataSetIterator createDataSetIterator(INDArray features, INDArray labels, int batchSize) {
-        List<DataSet> dataSets = new ArrayList<>();
-
-        if (features.size(0) == 0 || labels.size(0) == 0) {
-            logger.warn("创建迭代器时发现空数据集");
-            return new ListDataSetIterator<>(dataSets, batchSize);
-        }
-
-        int numSamples = (int) features.size(0);
-
-        for (int i = 0; i < numSamples; i++) {
-            // 获取特征 - 必须保持3D形状 [1, time_steps, features]
-            INDArray feature;
-            if (features.rank() == 3) {
-                // 3D数组: [样本数, 时间步长, 特征数]
-                feature = features.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all(),
-                        NDArrayIndex.all()
-                );
-                // 确保保持3D形状 [1, time_steps, features]
-                feature = feature.reshape(1, (int) feature.size(0), (int) feature.size(1));
-            } else if (features.rank() == 2) {
-                // 如果是2D数组，需要重塑为3D
-                feature = features.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all()
-                );
-                // 重塑为3D: [1, 1, features]
-                feature = feature.reshape(1, 1, (int) feature.size(0));
-            } else {
-                throw new IllegalArgumentException("不支持的特征数组维度: rank=" + features.rank());
-            }
-
-            // 获取标签 - 应该是2D形状 [1, output_steps]
-            INDArray label;
-            if (labels.rank() == 2) {
-                // 2D数组: [样本数, 预测步长]
-                label = labels.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all()
-                );
-                // 保持2D形状: [1, output_steps]
-                label = label.reshape(1, (int) label.size(0));
-            } else if (labels.rank() == 1) {
-                // 1D数组: [样本数]
-                label = labels.get(NDArrayIndex.point(i));
-                label = label.reshape(1, 1);
-            } else if (labels.rank() == 3) {
-                // 3D数组: [样本数, time_steps, output_steps] - 需要压缩为2D
-                label = labels.get(
-                        NDArrayIndex.point(i),
-                        NDArrayIndex.all(),
-                        NDArrayIndex.all()
-                );
-                // 压缩为2D: 取最后一个时间步的预测
-                label = label.get(NDArrayIndex.point((int) label.size(0) - 1), NDArrayIndex.all());
-                label = label.reshape(1, (int) label.size(0));
-            } else {
-                throw new IllegalArgumentException("不支持的标签数组维度: rank=" + labels.rank());
-            }
-
-            // 验证维度
-            if (feature.rank() != 3) {
-                throw new IllegalStateException("特征必须是3D，实际为: " + feature.rank() + "D, 形状: " + Arrays.toString(feature.shape()));
-            }
-
-            if (label.rank() != 2) {
-                throw new IllegalStateException("标签必须是2D，实际为: " + label.rank() + "D, 形状: " + Arrays.toString(label.shape()));
-            }
-
-            dataSets.add(new DataSet(feature, label));
-        }
-
-        return new ListDataSetIterator<>(dataSets, Math.min(batchSize, dataSets.size()));
     }
 
     /**
