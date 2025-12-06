@@ -3,6 +3,7 @@ package com.sunyuyang.model;
 import com.sunyuyang.entity.ModelConfig;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.*;
+import org.deeplearning4j.nn.conf.inputs.InputType;
 import org.deeplearning4j.nn.conf.layers.*;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
@@ -51,14 +52,13 @@ public class LSTMModel {
     }
 
     /**
-     * 构建LSTM模型配置
+     * 构建LSTM模型配置 - 修正版本
      */
     public MultiLayerConfiguration buildModelConfig(int numInputFeatures, int numOutputSteps, int timeSteps) {
         logger.info("Building LSTM model configuration...");
         logger.info("Input features: {}, Output steps: {}, Time steps: {}",
                 numInputFeatures, numOutputSteps, timeSteps);
 
-        // 使用RnnOutputLayer来处理时间序列输出
         return new NeuralNetConfiguration.Builder()
                 .seed(12345)
                 .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
@@ -67,10 +67,11 @@ public class LSTMModel {
                 .l2(1e-4)
                 .list()
 
-                // 第一LSTM层
+                // 第一LSTM层 - 输入应该是时间步长，而不是特征数
+                // 注意：LSTM层的nIn应该是特征数，但输入形状需要正确排列
                 .layer(new LSTM.Builder()
                         .name("lstm-layer-1")
-                        .nIn(numInputFeatures)
+                        .nIn(numInputFeatures)  // 输入特征数
                         .nOut(config.getLstmLayer1Size())
                         .activation(Activation.TANH)
                         .gateActivationFunction(Activation.SIGMOID)
@@ -87,20 +88,24 @@ public class LSTMModel {
                         .dropOut(config.getDropoutRate())
                         .build())
 
-                // 全连接层 - 使用DenseLayer而不是DenseLayer，因为在时间序列中每个时间步都需要应用
+                // 全连接层
                 .layer(new DenseLayer.Builder()
                         .name("dense-layer")
+                        .nIn(config.getLstmLayer2Size())
                         .nOut(config.getDenseLayerSize())
                         .activation(Activation.RELU)
                         .build())
 
-                // 输出层 - 使用RnnOutputLayer处理时间序列
-                .layer(new RnnOutputLayer.Builder(LossFunctions.LossFunction.MSE)
+                // 输出层 - 修改为DenseLayer，因为我们预测的是多步输出
+                .layer(new DenseLayer.Builder()
                         .name("output-layer")
-                        .nOut(numOutputSteps)
+                        .nIn(config.getDenseLayerSize())
+                        .nOut(numOutputSteps)  // 输出步数
                         .activation(Activation.IDENTITY)
                         .build())
 
+                // 添加输入类型设置
+                .setInputType(InputType.recurrent(numInputFeatures, timeSteps))
                 .build();
     }
 
